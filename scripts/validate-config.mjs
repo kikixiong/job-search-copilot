@@ -12,6 +12,10 @@ function requireValue(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 async function jsonFiles(relativeDirectory) {
   const directory = resolve(root, relativeDirectory);
   const entries = await readdir(directory, { withFileTypes: true });
@@ -32,6 +36,15 @@ async function validate() {
   requireValue(plugin.homepage === "https://github.com/kikixiong/job-search-copilot", "Plugin homepage is invalid.");
   requireValue(plugin.mcpServers === "./.mcp.json", "Plugin MCP manifest path is invalid.");
   requireValue(plugin.skills === "./skills/", "Plugin skills path is invalid.");
+  requireValue(plugin.interface && typeof plugin.interface === "object" && !Array.isArray(plugin.interface), "Plugin interface metadata is missing.");
+  const { interface: pluginInterface } = plugin;
+  requireValue(pluginInterface.displayName === "Job Search Copilot", "Plugin interface display name is invalid.");
+  for (const field of ["shortDescription", "longDescription", "developerName", "category"]) {
+    requireValue(nonEmptyString(pluginInterface[field]), `Plugin interface ${field} is required.`);
+  }
+  requireValue(pluginInterface.developerName === "Jiaqi Xiong", "Plugin interface developer name is invalid.");
+  requireValue(Array.isArray(pluginInterface.capabilities) && pluginInterface.capabilities.length > 0 && pluginInterface.capabilities.every(nonEmptyString), "Plugin interface capabilities must be a non-empty string array.");
+  requireValue(Array.isArray(pluginInterface.defaultPrompt) && pluginInterface.defaultPrompt.length > 0 && pluginInterface.defaultPrompt.length <= 3 && pluginInterface.defaultPrompt.every(nonEmptyString), "Plugin interface defaultPrompt must contain one to three prompts.");
 
   const mcp = await readJson(".mcp.json");
   requireValue(mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers), "MCP manifest must define an mcpServers object.");

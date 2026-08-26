@@ -14,5 +14,20 @@
     "codex-plugin"
   ],
   "mcpServers": "./.mcp.json",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Job Search Copilot",
+    "shortDescription": "Privacy-conscious support for organizing a job search.",
+    "longDescription": "A Codex plugin foundation for organizing job-search research and application workflows while keeping personal materials under your control.",
+    "developerName": "Jiaqi Xiong",
+    "category": "Productivity",
+    "capabilities": [
+      "Job-search workflow organization",
+      "Synthetic fixture validation"
+    ],
+    "defaultPrompt": [
+      "Help me organize a job-search plan."
+    ],
+    "brandColor": "#1D4ED8"
+  }
 }
