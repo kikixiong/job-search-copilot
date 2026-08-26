@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { copyFile, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as mammoth from "mammoth";
+
+import { writeGeneratedFile } from "./storage.js";
 
 const MAX_RESUME_BYTES = 20 * 1024 * 1024;
 const supportedExtensions = new Set([".txt", ".md", ".markdown", ".pdf", ".docx"]);
@@ -46,6 +48,7 @@ export async function inspectResume(sourcePath: string) {
   }
   if (metadata.size > MAX_RESUME_BYTES) throw new Error("Resume exceeds the 20 MiB size limit.");
   const contents = await readFile(sourcePath);
+  if (contents.length > MAX_RESUME_BYTES) throw new Error("Resume exceeds the 20 MiB size limit.");
   const extractedText = (await extractText(extension, contents)).trim();
   if (!extractedText) throw new Error("Resume has no extractable text. Use a text-based PDF, DOCX, TXT, or Markdown file.");
   return {
@@ -56,6 +59,6 @@ export async function inspectResume(sourcePath: string) {
   };
 }
 
-export async function storeResumeCopy(sourcePath: string, destinationPath: string) {
-  await copyFile(sourcePath, destinationPath);
+export async function storeResumeCopy(contents: Buffer, destinationPath: string, dataRoot: string) {
+  await writeGeneratedFile(dataRoot, destinationPath, contents);
 }

@@ -104,7 +104,7 @@ export function deriveEvidenceStatus(observations: Array<{ sourceType: "official
   return "community_lead";
 }
 
-const manualFieldPattern = /(eeo|demographic|race|ethnicity|gender|disabilit|veteran|legal[_ -]?consent|signature|captcha|mfa|multi[_ -]?factor|final[_ -]?submit)/i;
+const manualFieldPattern = /(eeo|demographic|race|ethnicity|gender|disabilit|veteran|legal[_ -]?consent|signature|captcha|mfa|multi[_ -]?factor|final[_ -]?submit|submit[_ -]?application|application[_ -]?submit)/i;
 const safeFieldPattern = /^(full[_ -]?name|first[_ -]?name|last[_ -]?name|email|phone|linkedin|portfolio|website|resume)$/i;
 
 export function classifyApplicationField(key: string, label: string): ApplicationFieldClassification {
@@ -114,16 +114,22 @@ export function classifyApplicationField(key: string, label: string): Applicatio
   return "confirm";
 }
 
-const sensitiveAttributeKey = /(email|phone|resume.?text|cookie|token|application.?answer.?body)/i;
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const phonePattern = /(?:\+?\d[\d .()-]{7,}\d)/g;
+const bearerPattern = /\bBearer\s+[-A-Z0-9._~+/=]+/gi;
 
-export function redactTraceAttributes(value: unknown, key = ""): unknown {
-  if (sensitiveAttributeKey.test(key)) return "[REDACTED]";
-  if (typeof value === "string") return value.replace(emailPattern, "[REDACTED]").replace(phonePattern, "[REDACTED]");
-  if (Array.isArray(value)) return value.map((item) => redactTraceAttributes(item));
+function isSensitiveTracePath(path: string) {
+  const semanticPath = path.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return /(email|phone|resumetext|cookie|authorization|bearer|token|applicationanswers?)/.test(semanticPath);
+}
+
+export function redactTraceAttributes(value: unknown, key = "", parentPath = ""): unknown {
+  const path = parentPath ? `${parentPath}.${key}` : key;
+  if (isSensitiveTracePath(path)) return "[REDACTED]";
+  if (typeof value === "string") return value.replace(emailPattern, "[REDACTED]").replace(phonePattern, "[REDACTED]").replace(bearerPattern, "[REDACTED]");
+  if (Array.isArray(value)) return value.map((item) => redactTraceAttributes(item, "", path));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([nestedKey, nestedValue]) => [nestedKey, redactTraceAttributes(nestedValue, nestedKey)]));
+    return Object.fromEntries(Object.entries(value).map(([nestedKey, nestedValue]) => [nestedKey, redactTraceAttributes(nestedValue, nestedKey, path)]));
   }
   return value;
 }

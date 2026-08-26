@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { constants, mkdirSync } from "node:fs";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
@@ -23,6 +24,46 @@ export function resolveInside(root: string, ...segments: string[]) {
     throw new Error("Generated path would escape the Job Search Copilot data directory.");
   }
   return candidate;
+}
+
+function resolvedPathIsInside(root: string, candidate: string) {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot === "" || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !pathFromRoot.startsWith("/"));
+}
+
+export async function ensureGeneratedDirectory(dataRoot: string, directory: string) {
+  const lexicalRoot = resolve(dataRoot);
+  const lexicalDirectory = resolveInside(lexicalRoot, relative(lexicalRoot, resolve(directory)));
+  const realRoot = await realpath(lexicalRoot);
+  const segments = relative(lexicalRoot, lexicalDirectory).split(sep).filter(Boolean);
+  let current = lexicalRoot;
+  for (const segment of segments) {
+    current = resolveInside(lexicalRoot, relative(lexicalRoot, current), segment);
+    await mkdir(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    const metadata = await lstat(current);
+    if (metadata.isSymbolicLink()) throw new Error(`Generated directory is a symlink and cannot be used safely: ${current}`);
+    if (!metadata.isDirectory()) throw new Error(`Generated path is not a directory: ${current}`);
+    const realCurrent = await realpath(current);
+    if (!resolvedPathIsInside(realRoot, realCurrent)) throw new Error(`Generated directory resolves outside the data root: ${current}`);
+  }
+  return lexicalDirectory;
+}
+
+export async function writeGeneratedFile(dataRoot: string, destinationPath: string, contents: string | Buffer) {
+  const lexicalRoot = resolve(dataRoot);
+  const destination = resolveInside(lexicalRoot, relative(lexicalRoot, resolve(destinationPath)));
+  await ensureGeneratedDirectory(lexicalRoot, dirname(destination));
+  const handle = await open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    await handle.writeFile(contents);
+  } finally {
+    await handle.close();
+  }
+  const [realRoot, realDestination] = await Promise.all([realpath(lexicalRoot), realpath(destination)]);
+  if (!resolvedPathIsInside(realRoot, realDestination)) throw new Error(`Generated file resolves outside the data root: ${destination}`);
+  return destination;
 }
 
 const migrations = [
@@ -182,20 +223,23 @@ export function openDatabase(dataRoot: string) {
   const databasePath = resolveInside(dataRoot, DATABASE_FILENAME);
   mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
   const database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+  database.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
   database.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
-  const current = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number };
-  for (let index = current.version; index < migrations.length; index += 1) {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const current = database.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations").get() as { version: number };
+    if (current.version > migrations.length) {
+      throw new Error(`Database schema version ${current.version} is newer than supported version ${migrations.length}.`);
+    }
+    for (let index = current.version; index < migrations.length; index += 1) {
       database.exec(migrations[index]);
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(index + 1, new Date().toISOString());
-      database.exec("COMMIT");
-    } catch (error) {
-      database.exec("ROLLBACK");
-      database.close();
-      throw error;
     }
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    database.close();
+    throw error;
   }
   return { database, databasePath };
 }

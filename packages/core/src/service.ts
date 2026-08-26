@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -24,7 +23,7 @@ import {
   type SearchBriefData
 } from "./domain.js";
 import { inspectResume, storeResumeCopy } from "./resume.js";
-import { defaultDataRoot, openDatabase, resolveInside } from "./storage.js";
+import { defaultDataRoot, ensureGeneratedDirectory, openDatabase, resolveInside, writeGeneratedFile } from "./storage.js";
 
 export interface JobSearchServiceOptions { dataRoot?: string }
 export interface Workspace { id: string; name: string; attachmentDirectory: string; exportDirectory: string; createdAt: string }
@@ -93,7 +92,7 @@ export class JobSearchService {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
     const storedPath = resolveInside(workspace.attachmentDirectory, `${inspected.sha256}${inspected.extension}`);
-    await storeResumeCopy(input.sourcePath, storedPath);
+    await storeResumeCopy(inspected.contents, storedPath, this.dataRoot);
     this.database.prepare("INSERT INTO resumes(id, workspace_id, original_name, stored_path, sha256, extracted_text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, workspace.id, basename(input.sourcePath), storedPath, inspected.sha256, inspected.extractedText, createdAt);
     return { id, workspaceId: workspace.id, originalName: basename(input.sourcePath), storedPath, sha256: inspected.sha256, extractedText: inspected.extractedText, createdAt };
   }
@@ -244,22 +243,21 @@ export class JobSearchService {
       contents = [["id", "kind", "company", "title", "location", "eligibility", "evidence_status", "canonical_apply_url"], ...opportunities.map((item) => [item.id, item.kind, item.company, item.title, item.location, item.eligibility, item.evidenceStatus, item.canonicalApplyUrl ?? ""])].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
     }
     const path = resolveInside(workspace.exportDirectory, `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}.${extension}`);
-    await writeFile(path, contents, { encoding: "utf8", mode: 0o600 });
+    await writeGeneratedFile(this.dataRoot, path, contents);
     return { format: input.format, path };
   }
 
   private recordOpportunity(workspaceId: string, runId: string, input: OpportunityInput) {
     const keys = opportunityKeys(input);
-    let row: OpportunityRow | undefined;
-    if (keys.normalizedUrl) row = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? AND normalized_url = ? LIMIT 1").get(workspaceId, keys.normalizedUrl) as OpportunityRow | undefined;
-    if (!row && keys.normalizedRequisition) row = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? AND normalized_requisition = ? LIMIT 1").get(workspaceId, keys.normalizedRequisition) as OpportunityRow | undefined;
-    if (!row) row = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? AND normalized_fallback = ? LIMIT 1").get(workspaceId, keys.normalizedFallback) as OpportunityRow | undefined;
+    const matches = this.findOpportunityMatches(workspaceId, keys);
+    const row = matches[0];
     const now = new Date().toISOString();
     const opportunityId = row?.id ?? randomUUID();
     if (!row) {
       const initialEvidence = deriveEvidenceStatus([{ sourceType: input.evidence.sourceType, status: input.evidence.status }]);
       this.database.prepare("INSERT INTO opportunities(id, workspace_id, kind, company, title, location, canonical_apply_url, requisition_id, normalized_url, normalized_requisition, normalized_fallback, eligibility, evidence_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(opportunityId, workspaceId, input.kind, input.company.trim(), input.title.trim(), input.location.trim(), keys.normalizedUrl, input.requisitionId?.trim() ?? null, keys.normalizedUrl, keys.normalizedRequisition, keys.normalizedFallback, input.eligibility, initialEvidence, now, now);
     } else {
+      for (const duplicate of matches.slice(1)) this.mergeOpportunityInto(workspaceId, opportunityId, duplicate.id);
       this.database.prepare("UPDATE opportunities SET canonical_apply_url = COALESCE(canonical_apply_url, ?), requisition_id = COALESCE(requisition_id, ?), normalized_url = COALESCE(normalized_url, ?), normalized_requisition = COALESCE(normalized_requisition, ?), updated_at = ? WHERE workspace_id = ? AND id = ?").run(keys.normalizedUrl, input.requisitionId?.trim() ?? null, keys.normalizedUrl, keys.normalizedRequisition, now, workspaceId, opportunityId);
     }
     this.database.prepare("INSERT INTO source_observations(id, workspace_id, opportunity_id, search_run_id, source_url, source_type, status, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.evidence.sourceUrl, input.evidence.sourceType, input.evidence.status, input.evidence.observedAt ?? now);
@@ -267,6 +265,34 @@ export class JobSearchService {
     this.database.prepare("UPDATE opportunities SET evidence_status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?").run(deriveEvidenceStatus(observations.map((item) => ({ sourceType: item.source_type, status: item.status }))), now, workspaceId, opportunityId);
     if (input.match) this.database.prepare("INSERT INTO match_assessments(id, workspace_id, opportunity_id, search_run_id, score, factors_json, reasons_json, gaps_json, unknowns_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.match.score, JSON.stringify(input.match.factors), JSON.stringify(input.match.reasons), JSON.stringify(input.match.gaps), JSON.stringify(input.match.unknowns), now);
     return opportunityId;
+  }
+
+  private findOpportunityMatches(workspaceId: string, keys: ReturnType<typeof opportunityKeys>) {
+    const orderedKeys: Array<["normalized_url" | "normalized_requisition" | "normalized_fallback", string | null]> = [
+      ["normalized_url", keys.normalizedUrl],
+      ["normalized_requisition", keys.normalizedRequisition],
+      ["normalized_fallback", keys.normalizedFallback]
+    ];
+    const matches: OpportunityRow[] = [];
+    const seen = new Set<string>();
+    for (const [column, value] of orderedKeys) {
+      if (!value) continue;
+      const rows = this.database.prepare(`SELECT * FROM opportunities WHERE workspace_id = ? AND ${column} = ? ORDER BY created_at, id`).all(workspaceId, value) as unknown as OpportunityRow[];
+      for (const row of rows) {
+        if (!seen.has(row.id)) {
+          matches.push(row);
+          seen.add(row.id);
+        }
+      }
+    }
+    return matches;
+  }
+
+  private mergeOpportunityInto(workspaceId: string, survivorId: string, duplicateId: string) {
+    for (const table of ["source_observations", "match_assessments", "feedback", "application_packets"] as const) {
+      this.database.prepare(`UPDATE ${table} SET opportunity_id = ? WHERE workspace_id = ? AND opportunity_id = ?`).run(survivorId, workspaceId, duplicateId);
+    }
+    this.database.prepare("DELETE FROM opportunities WHERE workspace_id = ? AND id = ?").run(workspaceId, duplicateId);
   }
 
   private readOpportunity(workspaceId: string, opportunityId: string) {
@@ -315,7 +341,7 @@ export class JobSearchService {
     return workspace;
   }
 
-  private async ensureWorkspaceDirectories(workspace: Workspace) { await Promise.all([mkdir(workspace.attachmentDirectory, { recursive: true, mode: 0o700 }), mkdir(workspace.exportDirectory, { recursive: true, mode: 0o700 })]) }
+  private async ensureWorkspaceDirectories(workspace: Workspace) { await Promise.all([ensureGeneratedDirectory(this.dataRoot, workspace.attachmentDirectory), ensureGeneratedDirectory(this.dataRoot, workspace.exportDirectory)]) }
   private workspaceFromRow(row: WorkspaceRow): Workspace { const directory = resolveInside(this.dataRoot, "workspaces", row.id); return { id: row.id, name: row.name, attachmentDirectory: resolveInside(directory, "attachments"), exportDirectory: resolveInside(directory, "exports"), createdAt: row.created_at } }
   private resumeFromRow(row: ResumeRow): ImportedResume { return { id: row.id, workspaceId: row.workspace_id, originalName: row.original_name, storedPath: row.stored_path, sha256: row.sha256, extractedText: row.extracted_text, createdAt: row.created_at } }
   private searchRunFromRow(row: SearchRunRow): SearchRun { return { id: row.id, workspaceId: row.workspace_id, profileVersion: row.profile_version, searchBriefVersion: row.search_brief_version, preferenceVersion: row.preference_version, status: row.status, startedAt: row.started_at, finishedAt: row.finished_at } }

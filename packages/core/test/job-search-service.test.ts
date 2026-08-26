@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
 import { JobSearchService } from "../src/index.js";
+import { inspectResume, storeResumeCopy } from "../src/resume.js";
 
 async function withService(run: (service: JobSearchService, root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "job-search-core-"));
@@ -373,4 +375,146 @@ test("exports JSON, Markdown, and CSV only beneath the workspace export director
       if (format === "csv") assert.ok(contents.includes('"A, Inc."'));
     }
   });
+});
+
+test("redacts authorization and application-answer containers including every descendant", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Nested trace secrets" });
+    await service.recordTraceEvent({
+      workspaceId: workspace.id,
+      traceId: "1af7651916cd43dd8448eb211c80319c",
+      spanId: "c7ad6b7169203331",
+      name: "application.answers.prepare",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      status: "ok",
+      attributes: {
+        authorization: "Bearer synthetic-bearer-secret",
+        request: { headers: { Authorization: "Bearer nested-secret" } },
+        credential: "Bearer generic-bearer-secret",
+        applicationAnswers: { coverLetter: "synthetic-private-answer", nested: { phoneScreen: "nested-private-answer" } },
+        application_answer: { body: "alternate-private-answer" },
+        safe: "public-metric"
+      }
+    });
+    const serialized = JSON.stringify((await service.getTraceEvents({ workspaceId: workspace.id }))[0]);
+    for (const secret of ["synthetic-bearer-secret", "nested-secret", "generic-bearer-secret", "synthetic-private-answer", "nested-private-answer", "alternate-private-answer"]) {
+      assert.equal(serialized.includes(secret), false);
+    }
+    assert.match(serialized, /public-metric/);
+    assert.match(serialized, /\[REDACTED\]/);
+  });
+});
+
+test("rejects export and attachment writes when workspace directories are symlinked outside the data root", async () => {
+  await withService(async (service, root) => {
+    const workspace = await service.openWorkspace({ name: "Symlink containment" });
+    const outsideExports = await mkdtemp(join(tmpdir(), "job-search-outside-exports-"));
+    await rm(workspace.exportDirectory, { recursive: true });
+    await symlink(outsideExports, workspace.exportDirectory, "dir");
+    await assert.rejects(service.exportWorkspace({ workspaceId: workspace.id, format: "json" }), /symlink|outside|data (?:root|directory)/i);
+    assert.deepEqual(await readdir(outsideExports), []);
+
+    const source = join(root, "safe-source.txt");
+    await writeFile(source, "safe synthetic resume");
+    const outsideAttachments = await mkdtemp(join(tmpdir(), "job-search-outside-attachments-"));
+    await rm(workspace.attachmentDirectory, { recursive: true });
+    await symlink(outsideAttachments, workspace.attachmentDirectory, "dir");
+    await assert.rejects(service.importResume({ workspaceId: workspace.id, sourcePath: source }), /symlink|outside|data (?:root|directory)/i);
+    assert.deepEqual(await readdir(outsideAttachments), []);
+  });
+});
+
+test("merges bridged URL and requisition rows into the URL-priority survivor and reparents relations", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Bridge dedup" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
+    const requisitionBatch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      opportunities: [{ kind: "job", company: "Bridge Co", title: "Engineer A", location: "Remote", requisitionId: "R-42", eligibility: "eligible", evidence: { sourceUrl: "https://official.test/closed", sourceType: "official", status: "closed" }, match: { score: 70, factors: { role: 70 }, reasons: [], gaps: [], unknowns: [] } }]
+    });
+    const requisitionId = requisitionBatch.opportunities[0].id;
+    await service.recordFeedback({ workspaceId: workspace.id, opportunityId: requisitionId, disposition: "interested" });
+    await service.upsertApplicationPacket({ workspaceId: workspace.id, opportunityId: requisitionId, status: "draft", fields: [] });
+
+    const urlBatch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      opportunities: [{ kind: "job", company: "Bridge Co", title: "Engineer B", location: "Onsite", canonicalApplyUrl: "https://jobs.test/bridge", eligibility: "unknown", evidence: { sourceUrl: "https://community.test/lead", sourceType: "community", status: "lead" }, match: { score: 80, factors: { role: 80 }, reasons: [], gaps: [], unknowns: [] } }]
+    });
+    const urlId = urlBatch.opportunities[0].id;
+    assert.notEqual(urlId, requisitionId);
+
+    await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      opportunities: [{ kind: "job", company: "Bridge Co", title: "Engineer bridge", location: "Hybrid", canonicalApplyUrl: "https://jobs.test/bridge?utm_source=bridge", requisitionId: "R-42", eligibility: "unknown", evidence: { sourceUrl: "https://official.test/open", sourceType: "official", status: "open" }, match: { score: 90, factors: { role: 90 }, reasons: [], gaps: [], unknowns: [] } }]
+    });
+
+    const opportunities = await service.queryOpportunities({ workspaceId: workspace.id });
+    assert.equal(opportunities.length, 1);
+    assert.equal(opportunities[0].id, urlId);
+    assert.equal(opportunities[0].evidenceStatus, "conflict");
+    assert.equal(opportunities[0].sourceObservations.length, 3);
+    const database = new DatabaseSync(service.databasePath, { readOnly: true });
+    assert.equal((database.prepare("SELECT COUNT(*) AS count FROM match_assessments WHERE opportunity_id = ?").get(urlId) as { count: number }).count, 3);
+    assert.equal((database.prepare("SELECT opportunity_id FROM feedback").get() as { opportunity_id: string }).opportunity_id, urlId);
+    assert.equal((database.prepare("SELECT opportunity_id FROM application_packets").get() as { opportunity_id: string }).opportunity_id, urlId);
+    database.close();
+  });
+});
+
+test("stores the inspected resume buffer even if the source changes before persistence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-resume-buffer-"));
+  const source = join(root, "resume.txt");
+  const destination = join(root, "stored.txt");
+  await writeFile(source, "original inspected bytes");
+  const inspected = await inspectResume(source);
+  await writeFile(source, "changed source bytes");
+  await storeResumeCopy(inspected.contents, destination, root);
+  assert.deepEqual(await readFile(destination), Buffer.from("original inspected bytes"));
+});
+
+test("classifies common application-submit key and label variants as manual-only", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Submit variants" });
+    const packet = await service.upsertApplicationPacket({
+      workspaceId: workspace.id,
+      status: "draft",
+      fields: [
+        { key: "submit_application", label: "Continue", value: "yes" },
+        { key: "primary_action", label: "Submit application", value: "yes" },
+        { key: "application-submit", label: "Apply now", value: "yes" }
+      ]
+    });
+    assert.deepEqual(packet.fields.map(({ classification }) => classification), ["manual_only", "manual_only", "manual_only"]);
+  });
+});
+
+test("serializes concurrent migration startup and rejects a database from a future schema version", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-migration-lock-"));
+  const databasePath = join(root, "job-search.sqlite");
+  const lock = new DatabaseSync(databasePath);
+  lock.exec("PRAGMA journal_mode = WAL; CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); BEGIN IMMEDIATE;");
+  const fixture = join(import.meta.dirname, "fixtures", "open-service.mjs");
+  const children = Array.from({ length: 4 }, (_, index) => new Promise<{ code: number | null; stderr: string }>((resolveChild) => {
+    const child = spawn(process.execPath, [fixture, root, `Concurrent ${index}`], { env: { ...process.env, NODE_NO_WARNINGS: "1" } });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("exit", (code) => resolveChild({ code, stderr }));
+  }));
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+  lock.exec("COMMIT");
+  lock.close();
+  const results = await Promise.all(children);
+  assert.deepEqual(results.map(({ code }) => code), [0, 0, 0, 0], results.map(({ stderr }) => stderr).join("\n"));
+
+  const futureRoot = await mkdtemp(join(tmpdir(), "job-search-future-schema-"));
+  const future = new DatabaseSync(join(futureRoot, "job-search.sqlite"));
+  future.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+  future.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(999, new Date().toISOString());
+  future.close();
+  assert.throws(() => new JobSearchService({ dataRoot: futureRoot }), /future|newer|unsupported/i);
 });
