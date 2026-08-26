@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Job Search Loop"
+  short_description: "Resume a confirmed job-search workflow"
+  default_prompt: "Use $run-job-search-loop to resume my confirmed job-search workflow from its saved workspace state."
