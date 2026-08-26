@@ -56,14 +56,16 @@ function cleanBuildId(id) {
   return withoutFsPrefix.replace(/[?#].*$/, "");
 }
 
-export async function validateBuildInputProvenance({ repositoryRoot: requestedRoot, inputIds }) {
+export async function validateBuildInputProvenance({ repositoryRoot: requestedRoot, inputRoot: requestedInputRoot, inputIds }) {
   const root = await realpath(requestedRoot);
+  const inputRoot = await realpath(requestedInputRoot ?? root);
+  if (!isPathInside(root, inputRoot)) throw new Error(`Release build input root is outside repository: ${inputRoot}`);
   const tracked = new Set((await trackedFilesBeneath(root, ["."])).map((item) => item.replaceAll("\\", "/")));
   const rejected = [];
   for (const inputId of [...new Set(inputIds)].sort((left, right) => left.localeCompare(right, "en"))) {
     if (!inputId || isVirtualBuildId(inputId)) continue;
     const cleaned = cleanBuildId(inputId);
-    const absolute = resolve(root, cleaned);
+    const absolute = resolve(inputRoot, cleaned);
     let canonical;
     try {
       canonical = await realpath(absolute);
@@ -134,6 +136,7 @@ export async function buildViewerAssets({ root, outDir, plugins = [] }) {
     : [...(output.originalFileNames ?? []), ...(output.originalFileName ? [output.originalFileName] : [])]));
   await validateBuildInputProvenance({
     repositoryRoot: gitRepositoryRoot(root),
+    inputRoot: root,
     inputIds: [join(root, "index.html"), ...moduleIds]
   });
   return [...new Set(builds.flatMap((build) => build.output.map(({ fileName }) => fileName)))]

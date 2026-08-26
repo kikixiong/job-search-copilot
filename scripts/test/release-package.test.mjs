@@ -152,6 +152,26 @@ test("release input provenance allows exact virtual and dependency IDs but rejec
   }
 });
 
+test("release input provenance resolves relative Vite module IDs from the build root", async () => {
+  const { validateBuildInputProvenance } = await packager();
+  const root = await mkdtemp(join(tmpdir(), "job-search-relative-provenance-"));
+  const viewerRoot = join(root, "packages/viewer");
+  try {
+    await mkdir(viewerRoot, { recursive: true });
+    await writeFile(join(viewerRoot, "index.html"), "<!doctype html>\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "packages/viewer/index.html"], { cwd: root });
+
+    await assert.doesNotReject(validateBuildInputProvenance({
+      repositoryRoot: root,
+      inputRoot: viewerRoot,
+      inputIds: ["index.html"]
+    }));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("release MCP bundle resolves workspace packages from tracked source instead of generated dist", async () => {
   const { buildMcpBundle } = await packager();
   assert.equal(typeof buildMcpBundle, "function", "release MCP source bundler is not implemented");
