@@ -1,0 +1,38 @@
+name: linux-node22
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate plugin, fixtures, and skills
+        run: npm run validate
+      - name: Non-mutating lint
+        run: npm run lint
+      - name: Focused core tests
+        run: npm run test:core
+      - name: Full tests
+        run: npm test
+      - name: Typecheck and build
+        run: npm run build
+      - name: Tracked-file sensitive-data gate
+        run: npm run scan:sensitive
+      - name: Production dependency audit
+        run: npm run audit:prod
+      - name: Bundle, license, SBOM, and package
+        run: npm run release:package
+      - name: Bundled MCP and Viewer smoke
+        run: npm run release:smoke

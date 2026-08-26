@@ -8,11 +8,20 @@ import { writeGeneratedFile } from "./storage.js";
 
 const MAX_RESUME_BYTES = 20 * 1024 * 1024;
 const supportedExtensions = new Set([".txt", ".md", ".markdown", ".pdf", ".docx"]);
+declare const __JOB_SEARCH_COPILOT_BUNDLED__: boolean | undefined;
 
 async function extractPdf(contents: Buffer) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const standardFontDataUrl = fileURLToPath(new URL("../../standard_fonts/", import.meta.resolve("pdfjs-dist/legacy/build/pdf.mjs")));
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(contents), standardFontDataUrl });
+  const assetRoot = typeof __JOB_SEARCH_COPILOT_BUNDLED__ !== "undefined" && __JOB_SEARCH_COPILOT_BUNDLED__
+    ? new URL("../pdfjs/", import.meta.url)
+    : new URL("../../", import.meta.resolve("pdfjs-dist/legacy/build/pdf.mjs"));
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(contents),
+    standardFontDataUrl: fileURLToPath(new URL("standard_fonts/", assetRoot)),
+    cMapUrl: fileURLToPath(new URL("cmaps/", assetRoot)),
+    cMapPacked: true,
+    wasmUrl: fileURLToPath(new URL("wasm/", assetRoot))
+  });
   const document = await loadingTask.promise;
   const pages: string[] = [];
   try {

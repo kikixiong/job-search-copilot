@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist/static", emptyOutDir: false },
+  base: "./",
+  build: { outDir: "dist/static", emptyOutDir: true },
   server: { host: "127.0.0.1" }
 });

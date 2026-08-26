@@ -94,7 +94,6 @@ test("rejects hostile Host and Origin headers and returns explicit auth errors",
   try {
     const url = await launcher.urlFor(workspace.id);
     const { cookie, cleanUrl } = await authenticate(url);
-    const origin = new URL(url).origin;
     assert.equal((await fetch(api(cleanUrl, "snapshot"))).status, 401);
     assert.equal(await hostileHostStatus(cleanUrl), 403);
     assert.equal((await fetch(api(cleanUrl, "feedback"), { method: "POST", headers: { cookie, origin: "https://evil.example", "content-type": "application/json" }, body: JSON.stringify({ opportunityId: opportunity.id, disposition: "interested" }) })).status, 403);

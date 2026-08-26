@@ -106,7 +106,7 @@ The scoped re-review of `651bb4f` found three remaining Important boundaries (I-
 
 `JobSearchService` now owns one `WorkspaceRecoverySnapshot` public DTO and one projection from the private database-shaped recovery snapshot. Both `getWorkspaceSnapshot()` and JSON `workspace_export` use that projection; the Viewer consumes the same public result and may only narrow it further. JSON export content on disk is the same safe projection returned to MCP, so no internal raw snapshot is a public recovery response.
 
-The Core projection fails closed for email, phone, Bearer, JWT, API keys, named cookie/session/credential/authorization/token/secret/password values, file URLs, arbitrary absolute POSIX paths (including punctuation-delimited paths and `/root`, `/data`, `/workspace`), Windows drive paths, and UNC paths. Public URLs are omitted when they contain userinfo, sensitive/PII path components, sensitive query keys or values, or sensitive fragments. High-risk free text becomes the whole-value marker `[REDACTED]`; ordinary public text remains visible. Trace still has a fixed structural allowlist, with URL fields using the same public URL policy.
+The Core projection fails closed for email, phone, Bearer, JWT, API keys, named cookie/session/credential/authorization/token/secret/password values, file URLs, arbitrary absolute POSIX paths (including punctuation-delimited synthetic root-home, `/data`, and `/workspace` examples), Windows drive paths, and UNC paths. Public URLs are omitted when they contain userinfo, sensitive/PII path components, sensitive query keys or values, or sensitive fragments. High-risk free text becomes the whole-value marker `[REDACTED]`; ordinary public text remains visible. Trace still has a fixed structural allowlist, with URL fields using the same public URL policy.
 
 ### Raw ATS decision and evidence wording
 
@@ -120,7 +120,7 @@ Token exchange now creates independent random 32-byte values: a route handle app
 
 ### Second-pass RED → GREEN evidence
 
-1. MCP recovery RED exposed `/root` and other secret containers through `workspace_export(includeContent:true)`. GREEN routes both recovery entry points and the JSON artifact through the Core public projection; the regression covers response and file content while preserving all 12 tools.
+1. MCP recovery RED exposed a synthetic root-home path and other secret containers through `workspace_export(includeContent:true)`. GREEN routes both recovery entry points and the JSON artifact through the Core public projection; the regression covers response and file content while preserving all 12 tools.
 2. Session RED showed `viewer_session=<route handle>` was accepted. GREEN requires the independent cookie secret; real cookie access succeeds and derived-cookie forgery fails 401.
 3. ATS HTTP RED had no server-side guidance conclusion. GREEN returns a raw-data-side copy decision for same-path secret-bearing destination differences and reviewed only for exactly matching safe raw destinations.
 4. Community-only UI RED did not contain `尚未官方核验`. GREEN separates discovery time from official verification semantics.
@@ -140,13 +140,13 @@ Residual risk is therefore limited to the pending clean-install React/full-build
 
 ## Final I-3 closure — Unicode-adjacent POSIX paths
 
-The final scoped re-review found that the POSIX detector still depended on a finite ASCII prefix list. Chinese text such as `路径：/root/private/resume.pdf` and `参见/root/private/resume.pdf` could therefore cross the shared Core recovery projection unchanged.
+The final scoped re-review found that the POSIX detector still depended on a finite ASCII prefix list. Chinese text adjacent to a synthetic root-home resume path could therefore cross the shared Core recovery projection unchanged.
 
 The detector now treats any single-slash path candidate as high-risk regardless of the preceding Unicode or text character. Negative lookaround explicitly excludes the `://`/`//` separators themselves; free-text URLs that contain a later path may conservatively redact, while the dedicated public-URL projection continues to handle URL identity separately. File URL, UNC, and Windows drive rules remain distinct, and the drive rule rejects doubled slashes so `https://example.test` is not mistaken for a drive path.
 
 Observed TDD evidence:
 
-- RED: the direct helper returned both Chinese examples unchanged; the real `getWorkspaceSnapshot()` contained `/root/private/resume.pdf`; MCP export response/file and Viewer HTTP snapshot both contained `参见/root`.
+- RED: the direct helper returned both Chinese synthetic path examples unchanged; the real `getWorkspaceSnapshot()`, MCP export response/file, and Viewer HTTP snapshot contained that root-home path.
 - Intermediate RED: the first Unicode-aware implementation exposed that the Windows drive expression classified `https://` as `s:/`; the helper regression caught it before completion.
 - GREEN: direct helper plus real snapshot 2/2; TypeScript build; Core 25/25; MCP 9/9 with exactly 12 tools and response/file checks; Viewer HTTP/security 10/10.
 - `git diff --check` passed. No React, root full test/build, or built-output smoke was repeated; those remain consolidated in Task 5's clean-install gate as previously recorded.
@@ -155,12 +155,12 @@ This pass changes no route, DTO, schema, dependency, configuration, plugin, rele
 
 ## Approval I-3 closure — colon-adjacent single-segment paths
 
-The approval review identified one remaining single-character bypass: the POSIX negative lookbehind excluded `:`, so `路径:/root`, `:/root`, and other colon-adjacent single-segment absolute paths had no later slash that could trigger redaction. The production change is deliberately one character in behavior: POSIX detection now excludes only a preceding `/` and retains `(?!/)`. Consequently the first slash of `://` is rejected because another slash follows, and the second is rejected because a slash precedes it, while `:/root` is fail-closed.
+The approval review identified one remaining single-character bypass: the POSIX negative lookbehind excluded `:`, so colon-adjacent synthetic single-segment absolute paths had no later slash that could trigger redaction. The production change is deliberately one character in behavior: POSIX detection now excludes only a preceding `/` and retains `(?!/)`. Consequently the first slash of `://` is rejected because another slash follows, and the second is rejected because a slash precedes it, while the colon-adjacent synthetic path is fail-closed.
 
 TDD evidence on this exact boundary:
 
-- RED: `redactPublicText("路径:/root")`, the real Core snapshot, MCP export response/file, and Viewer HTTP snapshot all exposed the literal path.
-- GREEN helper coverage includes `路径:/root`, `:/root`, and `/secret.txt`; UNC remains `[REDACTED]`; plain free text containing only `https://example.test` remains visible; dedicated `redactPublicUrl("https://example.test/jobs/1")` preserves the normal HTTPS URL.
+- RED: the colon-adjacent synthetic root-home path was exposed by `redactPublicText`, the real Core snapshot, MCP export response/file, and Viewer HTTP snapshot.
+- GREEN helper coverage includes colon-adjacent and single-file synthetic absolute paths; UNC remains `[REDACTED]`; plain free text containing only `https://example.test` remains visible; dedicated `redactPublicUrl("https://example.test/jobs/1")` preserves the normal HTTPS URL.
 - Current affected gates: TypeScript passed; Core 25/25; MCP 9/9 with exactly 12 tools; Viewer HTTP/security 10/10; `git diff --check` passed.
 
 No React/full/build/built-smoke repetition was added; Task 5 retains the clean-install final gate. No public API, route, schema, dependency, configuration, plugin, or release artifact changed.

@@ -1,7 +1,7 @@
 {
   "name": "job-search-copilot",
   "version": "0.1.0",
-  "description": "A privacy-conscious Codex plugin scaffold for structured job-search assistance.",
+  "description": "A local-first Codex copilot for evidence-grounded job search and application preparation.",
   "author": {
     "name": "Jiaqi Xiong",
     "url": "https://github.com/kikixiong"
@@ -17,13 +17,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Job Search Copilot",
-    "shortDescription": "Privacy-conscious support for organizing a job search.",
-    "longDescription": "A Codex plugin foundation for organizing job-search research and application workflows while keeping personal materials under your control.",
+    "shortDescription": "Local-first, evidence-grounded job-search workflows.",
+    "longDescription": "A Chinese-first Codex plugin for career positioning, public opportunity research, evidence review, feedback loops, and application preparation without final-submit automation.",
     "developerName": "Jiaqi Xiong",
     "category": "Productivity",
     "capabilities": [
-      "Job-search workflow organization",
-      "Synthetic fixture validation"
+      "Versioned job-search workflow",
+      "Official-source evidence review",
+      "Local application preparation"
     ],
     "defaultPrompt": [
       "上传简历，帮我先明确求职定位并确认目标岗位。",

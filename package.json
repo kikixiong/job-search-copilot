@@ -17,18 +17,31 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run validate:config && tsc -b --pretty false && npm run build:client -w @kikixiong/job-search-copilot-viewer",
+    "build": "npm run validate && tsc -b --pretty false && npm run build:client -w @kikixiong/job-search-copilot-viewer",
     "clean": "tsc -b --clean",
-    "test": "npm run validate:config && tsx --test packages/*/test/**/*.test.ts packages/*/test/**/*.test.tsx",
+    "test": "npm run validate && tsx --test packages/*/test/**/*.test.ts packages/*/test/**/*.test.tsx scripts/test/*.test.mjs",
     "test:core": "tsc -b packages/core --pretty false && tsx --test packages/core/test/**/*.test.ts",
     "test:mcp": "tsc -b packages/core packages/viewer --pretty false && tsx --test packages/mcp/test/**/*.test.ts",
     "test:viewer": "tsc -b packages/core packages/viewer --pretty false && npm test -w @kikixiong/job-search-copilot-viewer",
     "typecheck": "tsc -b --pretty false",
-    "validate:config": "node scripts/validate-config.mjs"
+    "validate": "npm run validate:config && npm run validate:skills",
+    "validate:config": "node scripts/validate-config.mjs",
+    "validate:skills": "node scripts/validate-skills.mjs",
+    "lint": "eslint .",
+    "scan:sensitive": "node scripts/scan-sensitive.mjs",
+    "release:package": "node scripts/build-release.mjs",
+    "release:smoke": "node scripts/smoke-release.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
     "tsx": "^4.23.12",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.68.0"
   }
 }
