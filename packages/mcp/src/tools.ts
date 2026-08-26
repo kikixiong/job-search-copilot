@@ -46,7 +46,10 @@ type ToolDefinition = {
 };
 
 const workspaceId = z.uuid();
-const packetFields = z.array(z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string() }).strict());
+const packetProvenance = z.object({ source: z.enum(["profile", "resume", "user_confirmed", "official", "unknown"]), locator: z.string().trim().min(1), reviewed: z.boolean(), sensitive: z.boolean() }).strict();
+const packetFields = z.array(z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string(), provenance: packetProvenance.optional() }).strict());
+const packetAudit = z.object({ version: z.number().int().positive(), retrievedAt: z.iso.datetime(), destinationUrl: z.url(), status: z.enum(["verified", "failed"]) }).strict();
+const packetAttachments = z.array(z.object({ name: z.string().trim().min(1), status: z.enum(["ready", "missing", "manual_only"]), locator: z.string().trim().min(1).optional() }).strict());
 
 function isLoopback(value: string) {
   let url: URL;
@@ -107,13 +110,13 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
     {
       name: "application_packet_upsert",
       description: "Create or update a local application packet without submitting it.",
-      schema: z.object({ workspaceId, packetId: z.uuid().optional(), opportunityId: z.uuid().optional(), status: z.enum(["draft", "reviewed", "ready_for_prefill"]), fields: packetFields }).strict(),
+      schema: z.object({ workspaceId, packetId: z.uuid().optional(), opportunityId: z.uuid().optional(), status: z.enum(["draft", "reviewed"]), fields: packetFields, audit: packetAudit.optional(), attachments: packetAttachments.optional(), unknowns: z.array(z.string().trim().min(1)).optional() }).strict(),
       handle: (input: Parameters<JobSearchService["upsertApplicationPacket"]>[0]) => service.upsertApplicationPacket(input)
     },
     {
       name: "application_packet_review",
       description: "Review a packet and mark it ready for prefill, never submitted.",
-      schema: z.object({ workspaceId, packetId: z.uuid() }).strict(),
+      schema: z.object({ workspaceId, packetId: z.uuid(), revision: z.number().int().positive(), acknowledgedFieldIds: z.array(z.uuid()).max(100) }).strict(),
       handle: (input: Parameters<JobSearchService["reviewApplicationPacket"]>[0]) => service.reviewApplicationPacket(input)
     },
     {

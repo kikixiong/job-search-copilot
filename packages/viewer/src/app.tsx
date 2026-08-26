@@ -3,7 +3,7 @@ import type { FeedbackDisposition, Opportunity, WorkspaceRecoverySnapshot } from
 import { applicationGuidanceMode } from "./policy.js";
 
 type Area = "opportunities" | "profile" | "runs" | "application";
-type Snapshot = WorkspaceRecoverySnapshot;
+type Snapshot = Omit<WorkspaceRecoverySnapshot, "trace"> & { trace: Array<{ id: string; runId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; fields: Record<string, string | number | boolean | null> }> };
 
 const areaLabels: Record<Area, string> = { opportunities: "机会对比", profile: "候选人档案", runs: "搜索记录", application: "申请准备" };
 const dispositionLabels: Record<FeedbackDisposition, string> = { interested: "感兴趣", later: "稍后看", rejected: "不考虑", information_error: "信息有误", closed: "职位关闭", applied: "已申请" };
@@ -29,8 +29,9 @@ function groupFor(opportunity: Opportunity) {
 
 function EvidenceRail({ opportunity, reduced }: { opportunity: Opportunity; reduced: boolean }) {
   const lead = opportunity.sourceObservations.find(({ sourceType }) => sourceType === "community");
-  const official = opportunity.sourceObservations.find(({ sourceType }) => sourceType === "official");
-  const checked = opportunity.sourceObservations.at(-1)?.observedAt ?? opportunity.updatedAt;
+  const officialObservations = opportunity.sourceObservations.filter(({ sourceType }) => sourceType === "official").sort((a, b) => a.observedAt.localeCompare(b.observedAt));
+  const official = officialObservations.at(-1);
+  const checked = official?.observedAt ?? opportunity.updatedAt;
   return <aside className="evidence-panel" aria-label={`证据轨：${opportunity.title}`}>
     <p className="eyebrow">EVIDENCE CHAIN</p><h2>从线索到判断</h2>
     <ol className={`evidence-rail ${reduced ? "motion-off" : "motion-on"}`}>
@@ -39,6 +40,15 @@ function EvidenceRail({ opportunity, reduced }: { opportunity: Opportunity; redu
       <li className="node checked"><span>核验时间</span><strong>{new Date(checked).toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" })}</strong></li>
       <li className={`node decision ${opportunity.evidenceStatus}`}><span>当前判断</span><strong>{opportunity.evidenceStatus === "verified_open" ? "值得申请" : opportunity.evidenceStatus === "community_lead" ? "仅为线索" : "需要核实"}</strong></li>
     </ol>
+    <section className="observation-log" aria-label="全部来源观察">
+      <h3>全部来源观察</h3>
+      {opportunity.sourceObservations.map((observation) => <article key={observation.id}>
+        <strong>{observation.sourceType === "official" ? "官方" : observation.sourceType === "community" ? "社区" : "聚合"} · {observation.status === "open" ? "开放" : observation.status === "closed" ? "关闭" : observation.status === "lead" ? "线索" : "未知"}</strong>
+        <small>{observation.sourceUrl ?? "来源地址已省略"}</small>
+        <span>{new Date(observation.observedAt).toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" })}</span>
+      </article>)}
+      {opportunity.evidenceStatus === "conflict" ? <p className="conflict-note">来源观察存在冲突；以最新官方观察作为核验时间，但保留全部历史观察。</p> : null}
+    </section>
     <dl className="rail-meta"><div><dt>资格</dt><dd>{opportunity.eligibility === "eligible" ? "符合" : opportunity.eligibility === "ineligible" ? "不符合" : "未知"}</dd></div><div><dt>最后核验</dt><dd>{checked.slice(0, 10)}</dd></div></dl>
   </aside>;
 }
@@ -50,7 +60,7 @@ function Feedback({ opportunity }: { opportunity: Opportunity }) {
   async function record(disposition: FeedbackDisposition) {
     setSelected(disposition);
     if (negative.has(disposition) && !reason.trim()) { setStatus("请先填写原因。这个反馈不会自动改变偏好。"); return; }
-    const response = await fetch("/api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ opportunityId: opportunity.id, disposition, ...(reason.trim() ? { reason: reason.trim() } : {}) }) });
+    const response = await fetch("api/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ opportunityId: opportunity.id, disposition, ...(reason.trim() ? { reason: reason.trim() } : {}) }) });
     setStatus(response.ok ? "反馈已记录。偏好不会在这里自动更改。" : "反馈未记录，请检查后重试。");
   }
   return <section className="feedback" aria-label="记录机会反馈">
@@ -86,7 +96,7 @@ function Profile({ snapshot }: { snapshot: Snapshot }) {
 }
 
 function Runs({ snapshot }: { snapshot: Snapshot }) {
-  return <main className="single-panel" id="main-content"><p className="eyebrow">SEARCH PROVENANCE</p><h1>每次范围变化都留痕</h1>{snapshot.runs.length ? snapshot.runs.map((run) => { const failures = snapshot.trace.filter((event) => event.status === "error" && event.startedAt >= run.startedAt); return <article className="run-card" key={run.id}><header><div><strong>{run.searchBrief.keywords.join(" · ")}</strong><p>{run.searchBrief.locations.join(" · ") || "地点不限"}</p></div><span className={`run-status ${run.status}`}>{run.status === "completed" ? "已完成" : run.status === "failed" ? "失败" : "进行中"}</span></header><p className="mono">配置版本 {run.profileVersion} / {run.searchBriefVersion} / {run.preferenceVersion ?? "—"}</p><dl className="run-counts"><div><dt>查询</dt><dd>{run.summary.queryCount}</dd></div><div><dt>来源</dt><dd>{run.summary.sourceCount}</dd></div><div><dt>结果</dt><dd>{run.summary.opportunityCount}</dd></div></dl>{failures.map((failure) => <div className="failure" key={failure.id}><strong>{String(failure.attributes.source ?? failure.name)}</strong><span>{String(failure.attributes.beforeScope ?? "旧范围")} → {String(failure.attributes.afterScope ?? "新范围")}</span></div>)}</article>; }) : <section className="zero-state"><h2>还没有搜索记录</h2><p>在 Codex 中开始一次搜索后，这里会显示绑定的版本、来源、结果和失败项。</p></section>}</main>;
+  return <main className="single-panel" id="main-content"><p className="eyebrow">SEARCH PROVENANCE</p><h1>每次范围变化都留痕</h1>{snapshot.runs.length ? snapshot.runs.map((run) => { const failures = snapshot.trace.filter((event) => event.status === "error" && event.runId === run.id); return <article className="run-card" key={run.id}><header><div><strong>{run.searchBrief.keywords.join(" · ")}</strong><p>{run.searchBrief.locations.join(" · ") || "地点不限"}</p></div><span className={`run-status ${run.status}`}>{run.status === "completed" ? "已完成" : run.status === "failed" ? "失败" : "进行中"}</span></header><p className="mono">配置版本 {run.profileVersion} / {run.searchBriefVersion} / {run.preferenceVersion ?? "—"}</p><dl className="run-counts"><div><dt>查询</dt><dd>{run.summary.queryCount}</dd></div><div><dt>来源</dt><dd>{run.summary.sourceCount}</dd></div><div><dt>结果</dt><dd>{run.summary.opportunityCount}</dd></div></dl>{failures.map((failure) => <div className="failure" key={failure.id}><strong>{String(failure.fields.source ?? failure.name)}</strong><span>{String(failure.fields.beforeScope ?? "旧范围")} → {String(failure.fields.afterScope ?? "新范围")}</span></div>)}</article>; }) : <section className="zero-state"><h2>还没有搜索记录</h2><p>在 Codex 中开始一次搜索后，这里会显示绑定的版本、来源、结果和失败项。</p></section>}</main>;
 }
 
 function Application({ snapshot }: { snapshot: Snapshot }) {
@@ -94,17 +104,19 @@ function Application({ snapshot }: { snapshot: Snapshot }) {
   const [status, setStatus] = useState("");
   const packet = snapshot.applicationPackets[0];
   const opportunity = snapshot.opportunities.find(({ id }) => id === packet?.opportunityId);
-  const mode = applicationGuidanceMode(opportunity?.canonicalApplyUrl);
   if (!packet) return <main className="single-panel zero-state" id="main-content"><p className="eyebrow">NEXT ACTION</p><h1>先选择机会并准备材料</h1><p>材料包由 Codex 生成；Viewer 只负责逐字段核对，不会提交申请。</p></main>;
-  async function copy(label: string) {
-    try { await navigator.clipboard.writeText(`${label}：请从已审核材料中复制，并在目标页面核对后手动粘贴。`); setStatus(`已复制 ${label} 填写指引。`); }
+  const mode = applicationGuidanceMode(opportunity, packet);
+  async function copy(field: (typeof packet.fields)[number]) {
+    const provenance = field.provenance;
+    const guidance = `${field.label}\n来源：${provenance?.source ?? "未记录"}\n定位：${provenance?.locator ?? "未记录"}\n审核：${provenance?.reviewed ? "已审核" : "待审核"}\n请在目标页面核对后手动填写。`;
+    try { await navigator.clipboard.writeText(guidance); setStatus(`已复制 ${field.label} 的来源指引。`); }
     catch { setStatus("复制失败，请手动选择填写指引。" ); }
   }
   async function review() {
-    const response = await fetch("/api/application/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ packetId: packet.id, acknowledgedConfirmFields: [...acknowledged] }) });
+    const response = await fetch("api/application/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: [...acknowledged] }) });
     setStatus(response.ok ? "材料包已审核，可按指引手动操作；最终提交仍由你完成。" : "仍有待确认字段，请逐项核对。" );
   }
-  return <main className="single-panel" id="main-content"><p className="eyebrow">APPLICATION PACKET</p><h1>逐字段核对，不跨过人工边界</h1><div className={`policy ${mode}`}><strong>{mode === "reviewed" ? "已审核 ATS 域名" : "复制模式"}</strong><p>{mode === "reviewed" ? "该官方 ATS 在明确允许列表中；仅能在审核后提供预填指引。" : "未知或禁止站点一律使用逐字段复制，不控制外部页面。"}</p></div><p className="mono">材料包 {packet.id.slice(0, 8)} · {packet.status}</p><section className="field-matrix" aria-label="申请字段分类">{packet.fields.map((field) => <article className={`field-row ${field.classification}`} key={field.key}><div><span className="classification">{classLabels[field.classification]}</span><h2>{field.label}</h2><p>{field.classification === "safe" ? "可从已审核身份资料中复制，粘贴后仍需核对。" : field.classification === "confirm" ? "内容可能变化，必须逐项确认。" : "保持空白并由你手动填写；不会被标记为自动填写。"}</p></div><div className="field-actions">{field.classification === "confirm" ? <label><input type="checkbox" checked={acknowledged.has(field.key)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); event.target.checked ? next.add(field.key) : next.delete(field.key); return next; })} />我已核对</label> : null}{field.classification !== "manual_only" ? <button type="button" onClick={() => void copy(field.label)} aria-label={`复制 ${field.label} 填写指引`}>复制指引</button> : null}</div></article>)}</section><button type="button" className="review-action" onClick={() => void review()}>完成材料审核</button><p className="boundary-note">附件、未知问题和敏感字段由你处理。这里没有登录、同意、签名、验证码、多因素认证或最终提交操作。</p><p role="status" aria-live="polite">{status}</p></main>;
+  return <main className="single-panel" id="main-content"><p className="eyebrow">APPLICATION PACKET</p><h1>逐字段核对，不跨过人工边界</h1><div className={`policy ${mode}`}><strong>{mode === "reviewed" ? "已审核 ATS 域名" : "复制模式"}</strong><p>{mode === "reviewed" ? "当前官方页面与本材料包审核记录一致；仅提供已审核字段的手动填写指引。" : "审核记录缺失、过期、不一致或站点不在允许范围时，只提供逐字段复制指引。"}</p></div><p className="mono">材料包 {packet.id.slice(0, 8)} · 修订 {packet.revision} · {packet.status}</p>{packet.audit ? <dl className="packet-meta"><div><dt>页面审核</dt><dd>v{packet.audit.version} · {packet.audit.status}</dd></div><div><dt>核验时间</dt><dd>{new Date(packet.audit.retrievedAt).toLocaleString("zh-CN")}</dd></div><div><dt>目标页面</dt><dd>{packet.audit.destinationUrl ?? "未记录"}</dd></div></dl> : <p className="boundary-note">未记录目标页面审核。</p>}<section className="field-matrix" aria-label="申请字段分类">{packet.fields.map((field) => <article className={`field-row ${field.classification}`} key={field.id}><div><span className="classification">{classLabels[field.classification]}</span><h2>{field.label}</h2><p>{field.classification === "safe" ? "可依据已审核来源手动填写，完成后仍需核对。" : field.classification === "confirm" ? "内容可能变化，必须逐项确认。" : "保持空白并由你手动填写；不会被标记为自动填写。"}</p><dl className="provenance"><div><dt>来源</dt><dd>{field.provenance?.source ?? "未记录"}</dd></div><div><dt>定位</dt><dd>{field.provenance?.locator ?? "未记录"}</dd></div><div><dt>审核</dt><dd>{field.provenance?.reviewed ? "已审核" : "待审核"}</dd></div></dl></div><div className="field-actions">{field.classification === "confirm" ? <label><input type="checkbox" checked={acknowledged.has(field.id)} onChange={(event) => setAcknowledged((current) => { const next = new Set(current); event.target.checked ? next.add(field.id) : next.delete(field.id); return next; })} />我已核对</label> : null}{field.classification !== "manual_only" ? <button type="button" onClick={() => void copy(field)} aria-label={`复制 ${field.label} 填写指引`}>复制指引</button> : null}</div></article>)}</section><section className="packet-support"><div><h2>附件</h2>{packet.attachments.length ? packet.attachments.map((attachment) => <p key={`${attachment.name}:${attachment.locator}`}><strong>{attachment.name}</strong><span> · {attachment.status} · {attachment.locator}</span></p>) : <p>未记录附件。</p>}</div><div><h2>待确认问题</h2>{packet.unknowns.length ? packet.unknowns.map((unknown) => <p key={unknown}>{unknown}</p>) : <p>没有记录未知项。</p>}</div></section><button type="button" className="review-action" onClick={() => void review()}>完成材料审核</button><p className="boundary-note">附件、未知问题和敏感字段由你处理。这里没有登录、同意、签名、验证码、多因素认证或最终提交操作。</p><p role="status" aria-live="polite">{status}</p></main>;
 }
 
 export function ViewerApp({ initialSnapshot }: { initialSnapshot?: Snapshot }) {
@@ -112,7 +124,7 @@ export function ViewerApp({ initialSnapshot }: { initialSnapshot?: Snapshot }) {
   const [area, setArea] = useState<Area>(() => initialSnapshot?.latestProfile ? "opportunities" : "profile");
   const [error, setError] = useState("");
   const environment = useEnvironment();
-  useEffect(() => { if (!initialSnapshot) fetch("/api/snapshot").then(async (response) => { if (!response.ok) throw new Error("无法读取本机工作区。" ); setSnapshot(await response.json()); }).catch((reason: Error) => setError(reason.message)); }, [initialSnapshot]);
+  useEffect(() => { if (!initialSnapshot) fetch("api/snapshot").then(async (response) => { if (!response.ok) throw new Error("无法读取本机工作区。" ); setSnapshot(await response.json()); }).catch((reason: Error) => setError(reason.message)); }, [initialSnapshot]);
   const content = useMemo(() => {
     if (!snapshot) return null;
     if (area === "profile") return <Profile snapshot={snapshot} />;
@@ -122,5 +134,8 @@ export function ViewerApp({ initialSnapshot }: { initialSnapshot?: Snapshot }) {
   }, [area, environment.reduced, snapshot]);
   if (error) return <main className="fatal"><h1>Viewer 无法读取工作区</h1><p>{error}</p><p>回到 Codex 重新打开 Viewer。</p></main>;
   if (!snapshot) return <main className="loading" aria-busy="true">正在读取本机工作区…</main>;
-  return <div className={`viewer-shell area-${area}`} data-testid="viewer-shell" data-layout={environment.mobile ? "mobile" : "desktop"} data-motion={environment.reduced ? "reduced" : "full"}><a className="skip-link" href="#main-content">跳到主要内容</a><header className="topbar"><div><span className="project-mark">求职证据台</span><strong>{snapshot.workspace.name}</strong></div><span className="mono">搜索版本 {snapshot.latestSearchBrief?.version ?? "—"}</span></header><nav className="sidebar" aria-label="查看区域">{(Object.keys(areaLabels) as Area[]).map((item) => <button key={item} type="button" onClick={() => setArea(item)} aria-current={area === item ? "page" : undefined}>{areaLabels[item]}</button>)}</nav><div className="workspace">{content}</div></div>;
+  function activateFromKeyboard(event: React.KeyboardEvent<HTMLButtonElement>, item: Area) {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setArea(item); }
+  }
+  return <div className={`viewer-shell area-${area}`} data-testid="viewer-shell" data-layout={environment.mobile ? "mobile" : "desktop"} data-motion={environment.reduced ? "reduced" : "full"}><a className="skip-link" href="#main-content">跳到主要内容</a><header className="topbar"><div><span className="project-mark">求职证据台</span><strong>{snapshot.workspace.name}</strong></div><span className="mono">搜索版本 {snapshot.latestSearchBrief?.version ?? "—"}</span></header><nav className="sidebar" aria-label="查看区域">{(Object.keys(areaLabels) as Area[]).map((item) => <button key={item} type="button" onClick={() => setArea(item)} onKeyDown={(event) => activateFromKeyboard(event, item)} aria-current={area === item ? "page" : undefined}>{areaLabels[item]}</button>)}</nav><div className="workspace">{content}</div></div>;
 }

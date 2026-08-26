@@ -1,6 +1,9 @@
 export { JobSearchService } from "./service.js";
 export type {
   ApplicationField,
+  ApplicationFieldProvenance,
+  ApplicationAudit,
+  ApplicationAttachment,
   ApplicationPacket,
   CandidateProfileVersion,
   ImportedResume,

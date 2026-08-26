@@ -33,9 +33,12 @@ export interface SearchRun { id: string; workspaceId: string; profileVersion: nu
 export interface SourceObservation { id: string; sourceUrl: string; sourceType: "official" | "community"; status: "open" | "closed" | "lead"; observedAt: string }
 export interface MatchAssessment { score: number; factors: Record<string, number>; reasons: string[]; gaps: string[]; unknowns: string[] }
 export interface Opportunity { id: string; workspaceId: string; kind: "job" | "internship"; company: string; title: string; location: string; canonicalApplyUrl: string | null; requisitionId: string | null; eligibility: Eligibility; evidenceStatus: EvidenceStatus; sourceObservations: SourceObservation[]; match: MatchAssessment | null; createdAt: string; updatedAt: string }
-export interface ApplicationField { id: string; key: string; label: string; value: string; classification: ApplicationFieldClassification }
-export interface ApplicationPacket { id: string; workspaceId: string; opportunityId: string | null; status: "draft" | "reviewed" | "ready_for_prefill"; fields: ApplicationField[]; createdAt: string; updatedAt: string }
-export interface TraceEvent { id: string; workspaceId: string; traceId: string; spanId: string; parentSpanId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }
+export interface ApplicationFieldProvenance { source: "profile" | "resume" | "user_confirmed" | "official" | "unknown"; locator: string; reviewed: boolean; sensitive: boolean }
+export interface ApplicationField { id: string; key: string; label: string; value: string; classification: ApplicationFieldClassification; provenance: ApplicationFieldProvenance | null }
+export interface ApplicationAudit { version: number; retrievedAt: string; destinationUrl: string; status: "verified" | "failed" }
+export interface ApplicationAttachment { name: string; status: "ready" | "missing" | "manual_only"; locator: string | null }
+export interface ApplicationPacket { id: string; workspaceId: string; opportunityId: string | null; status: "draft" | "reviewed" | "ready_for_prefill"; revision: number; audit: ApplicationAudit | null; attachments: ApplicationAttachment[]; unknowns: string[]; fields: ApplicationField[]; createdAt: string; updatedAt: string }
+export interface TraceEvent { id: string; workspaceId: string; runId: string | null; traceId: string; spanId: string; parentSpanId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }
 export interface WorkspaceRecoverySnapshot {
   workspace: { id: string; name: string; createdAt: string };
   latestProfile: { version: number; headline: string; skills: string[]; positioningTracks: Array<{ name: string; summary: string; targetRoles: string[] }>; createdAt: string } | null;
@@ -44,7 +47,7 @@ export interface WorkspaceRecoverySnapshot {
   resumeImported: boolean;
   runs: Array<SearchRun & { searchBrief: SearchBriefData; summary: { queryCount: number; sourceCount: number; opportunityCount: number } }>;
   feedback: Array<{ id: string; opportunityId: string; disposition: FeedbackDisposition; preferenceVersion: number | null; reason: string | null; createdAt: string }>;
-  applicationPackets: Array<{ id: string; opportunityId: string | null; status: ApplicationPacket["status"]; fields: Array<Pick<ApplicationField, "key" | "label" | "classification">>; createdAt: string; updatedAt: string }>;
+  applicationPackets: Array<{ id: string; opportunityId: string | null; status: ApplicationPacket["status"]; revision: number; audit: ApplicationAudit | null; attachments: ApplicationAttachment[]; unknowns: string[]; fields: Array<Pick<ApplicationField, "id" | "key" | "label" | "classification" | "provenance">>; createdAt: string; updatedAt: string }>;
   opportunities: Opportunity[];
   trace: TraceEvent[];
 }
@@ -55,15 +58,18 @@ type SearchRunRow = { id: string; workspace_id: string; profile_version: number;
 type OpportunityRow = { id: string; workspace_id: string; kind: Opportunity["kind"]; company: string; title: string; location: string; canonical_apply_url: string | null; requisition_id: string | null; eligibility: Eligibility; evidence_status: EvidenceStatus; created_at: string; updated_at: string };
 type ObservationRow = { id: string; source_url: string; source_type: SourceObservation["sourceType"]; status: SourceObservation["status"]; observed_at: string };
 type MatchRow = { score: number; factors_json: string; reasons_json: string; gaps_json: string; unknowns_json: string };
-type PacketRow = { id: string; workspace_id: string; opportunity_id: string | null; status: ApplicationPacket["status"]; created_at: string; updated_at: string };
-type FieldRow = { id: string; field_key: string; label: string; value: string; classification: ApplicationFieldClassification };
-type TraceRow = { id: string; workspace_id: string; trace_id: string; span_id: string; parent_span_id: string | null; name: string; started_at: string; ended_at: string | null; status: TraceEvent["status"]; attributes_json: string };
+type PacketRow = { id: string; workspace_id: string; opportunity_id: string | null; status: ApplicationPacket["status"]; revision: number; audit_version: number | null; audit_retrieved_at: string | null; audit_destination_url: string | null; audit_status: ApplicationAudit["status"] | null; attachments_json: string; unknowns_json: string; created_at: string; updated_at: string };
+type FieldRow = { id: string; field_key: string; label: string; value: string; classification: ApplicationFieldClassification; provenance_json: string | null };
+type TraceRow = { id: string; workspace_id: string; run_id: string | null; trace_id: string; span_id: string; parent_span_id: string | null; name: string; started_at: string; ended_at: string | null; status: TraceEvent["status"]; attributes_json: string };
 type OpportunityAliasKeyType = "url" | "requisition" | "fallback";
 
 const batchInputSchema = z.object({ query: z.object({ text: z.string().trim().min(1), source: z.string().trim().min(1) }).strict().optional(), opportunities: z.array(opportunityInputSchema) }).strict();
-const applicationFieldInputSchema = z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string() }).strict();
+const applicationFieldProvenanceSchema = z.object({ source: z.enum(["profile", "resume", "user_confirmed", "official", "unknown"]), locator: z.string().trim().min(1), reviewed: z.boolean(), sensitive: z.boolean() }).strict();
+const applicationFieldInputSchema = z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string(), provenance: applicationFieldProvenanceSchema.optional() }).strict();
+const applicationAuditSchema = z.object({ version: z.number().int().positive(), retrievedAt: z.iso.datetime(), destinationUrl: z.url(), status: z.enum(["verified", "failed"]) }).strict();
+const applicationAttachmentSchema = z.object({ name: z.string().trim().min(1), status: z.enum(["ready", "missing", "manual_only"]), locator: z.string().trim().min(1).optional() }).strict();
 const traceInputSchema = z.object({
-  traceId: z.string().regex(/^[a-f0-9]{32}$/i), spanId: z.string().regex(/^[a-f0-9]{16}$/i), parentSpanId: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
+  runId: z.uuid().optional(), traceId: z.string().regex(/^[a-f0-9]{32}$/i), spanId: z.string().regex(/^[a-f0-9]{16}$/i), parentSpanId: z.string().regex(/^[a-f0-9]{16}$/i).optional(),
   name: z.string().trim().min(1), startedAt: z.iso.datetime(), endedAt: z.iso.datetime().optional(), status: z.enum(["unset", "ok", "error"]), attributes: z.record(z.string(), z.unknown())
 }).strict();
 
@@ -177,11 +183,12 @@ export class JobSearchService {
 
   async recordFeedback(input: { workspaceId: string; opportunityId: string; disposition: FeedbackDisposition; reason?: string; confirmedPreferenceSnapshot?: PreferenceSnapshotData; preferenceBaseVersion?: number | null }) {
     await this.requireWorkspace(input.workspaceId);
-    this.requireOpportunity(input.workspaceId, input.opportunityId);
     const disposition = feedbackDispositionSchema.parse(input.disposition);
     const reason = input.reason === undefined ? null : z.string().trim().min(1).max(1000).parse(input.reason);
     const confirmed = input.confirmedPreferenceSnapshot ? preferenceSnapshotDataSchema.parse(input.confirmedPreferenceSnapshot) : undefined;
     return this.transaction(() => {
+      this.requireOpportunity(input.workspaceId, input.opportunityId);
+      if (["rejected", "information_error", "closed"].includes(disposition) && reason === null) throw new Error(`A non-empty reason is required for ${disposition} feedback.`);
       let preferenceVersion: number | null = null;
       if (confirmed && disposition !== "information_error" && disposition !== "closed") {
         if (input.preferenceBaseVersion === undefined) throw new Error("A preference base version is required with a confirmed snapshot.");
@@ -197,39 +204,60 @@ export class JobSearchService {
     });
   }
 
-  async upsertApplicationPacket(input: { workspaceId: string; packetId?: string; opportunityId?: string; status: "draft" | "reviewed" | "ready_for_prefill"; fields: Array<{ key: string; label: string; value: string }> }): Promise<ApplicationPacket> {
+  async upsertApplicationPacket(input: { workspaceId: string; packetId?: string; opportunityId?: string; status: "draft" | "reviewed" | "ready_for_prefill"; fields: Array<{ key: string; label: string; value: string; provenance?: ApplicationFieldProvenance }>; audit?: ApplicationAudit; attachments?: Array<{ name: string; status: ApplicationAttachment["status"]; locator?: string }>; unknowns?: string[] }): Promise<ApplicationPacket> {
     await this.requireWorkspace(input.workspaceId);
     if ((input.status as string) === "submitted") throw new Error("Application packets can never have submitted status; final submission is manual-only.");
-    const status = z.enum(["draft", "reviewed", "ready_for_prefill"]).parse(input.status);
+    const status = z.enum(["draft", "reviewed"]).parse(input.status);
     const fields = z.array(applicationFieldInputSchema).parse(input.fields);
+    const audit = input.audit ? applicationAuditSchema.parse(input.audit) : null;
+    const attachments: ApplicationAttachment[] = z.array(applicationAttachmentSchema).parse(input.attachments ?? []).map((attachment) => ({ ...attachment, locator: attachment.locator ?? null }));
+    const unknowns = z.array(z.string().trim().min(1)).parse(input.unknowns ?? []);
+    const duplicateKey = fields.find((field, index) => fields.findIndex((candidate) => candidate.key === field.key) !== index)?.key;
+    if (duplicateKey) throw new Error(`Application field keys must be unique; duplicate key: ${duplicateKey}`);
+    const classified = fields.map((field) => ({ ...field, classification: classifyApplicationField(field.key, field.label) }));
+    const populatedManual = classified.find((field) => field.classification === "manual_only" && field.value.length > 0);
+    if (populatedManual) throw new Error(`Manual-only field must remain blank: ${populatedManual.key}`);
     if (input.opportunityId) this.requireOpportunity(input.workspaceId, input.opportunityId);
     const packetId = input.packetId ?? randomUUID();
     const existing = input.packetId ? this.database.prepare("SELECT * FROM application_packets WHERE workspace_id = ? AND id = ?").get(input.workspaceId, input.packetId) as PacketRow | undefined : undefined;
     if (input.packetId && !existing) throw new Error(`Application packet not found: ${input.packetId}`);
     this.transaction(() => {
       const now = new Date().toISOString();
+      const revision = existing ? existing.revision + 1 : 1;
+      const existingFields = existing ? this.database.prepare("SELECT id, field_key FROM application_fields WHERE workspace_id = ? AND packet_id = ?").all(input.workspaceId, packetId) as Array<{ id: string; field_key: string }> : [];
+      const stableIds = new Map(existingFields.map((field) => [field.field_key, field.id]));
       if (existing) {
-        this.database.prepare("UPDATE application_packets SET opportunity_id = ?, status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?").run(input.opportunityId ?? existing.opportunity_id, status, now, input.workspaceId, packetId);
+        this.database.prepare("UPDATE application_packets SET opportunity_id = ?, status = ?, revision = ?, audit_version = ?, audit_retrieved_at = ?, audit_destination_url = ?, audit_status = ?, attachments_json = ?, unknowns_json = ?, updated_at = ? WHERE workspace_id = ? AND id = ?").run(input.opportunityId ?? existing.opportunity_id, status, revision, audit?.version ?? null, audit?.retrievedAt ?? null, audit?.destinationUrl ?? null, audit?.status ?? null, JSON.stringify(attachments), JSON.stringify(unknowns), now, input.workspaceId, packetId);
         this.database.prepare("DELETE FROM application_fields WHERE workspace_id = ? AND packet_id = ?").run(input.workspaceId, packetId);
-      } else this.database.prepare("INSERT INTO application_packets(id, workspace_id, opportunity_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(packetId, input.workspaceId, input.opportunityId ?? null, status, now, now);
-      const insert = this.database.prepare("INSERT INTO application_fields(id, workspace_id, packet_id, field_key, label, value, classification) VALUES (?, ?, ?, ?, ?, ?, ?)");
-      for (const field of fields) insert.run(randomUUID(), input.workspaceId, packetId, field.key, field.label, field.value, classifyApplicationField(field.key, field.label));
+      } else this.database.prepare("INSERT INTO application_packets(id, workspace_id, opportunity_id, status, revision, audit_version, audit_retrieved_at, audit_destination_url, audit_status, attachments_json, unknowns_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(packetId, input.workspaceId, input.opportunityId ?? null, status, revision, audit?.version ?? null, audit?.retrievedAt ?? null, audit?.destinationUrl ?? null, audit?.status ?? null, JSON.stringify(attachments), JSON.stringify(unknowns), now, now);
+      const insert = this.database.prepare("INSERT INTO application_fields(id, workspace_id, packet_id, field_key, label, value, classification, provenance_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+      for (const field of classified) insert.run(stableIds.get(field.key) ?? randomUUID(), input.workspaceId, packetId, field.key, field.label, field.value, field.classification, field.provenance ? JSON.stringify(field.provenance) : null);
     });
     return this.readApplicationPacket(input.workspaceId, packetId);
   }
 
-  async reviewApplicationPacket(input: { workspaceId: string; packetId: string }): Promise<ApplicationPacket> {
+  async reviewApplicationPacket(input: { workspaceId: string; packetId: string; revision: number; acknowledgedFieldIds: string[] }): Promise<ApplicationPacket> {
     await this.requireWorkspace(input.workspaceId);
-    this.readApplicationPacket(input.workspaceId, input.packetId);
-    this.database.prepare("UPDATE application_packets SET status = 'ready_for_prefill', updated_at = ? WHERE workspace_id = ? AND id = ?").run(new Date().toISOString(), input.workspaceId, input.packetId);
-    return this.readApplicationPacket(input.workspaceId, input.packetId);
+    z.object({ revision: z.number().int().positive(), acknowledgedFieldIds: z.array(z.uuid()).max(100) }).parse({ revision: input.revision, acknowledgedFieldIds: input.acknowledgedFieldIds });
+    return this.transaction(() => {
+      const packet = this.readApplicationPacket(input.workspaceId, input.packetId);
+      if (packet.revision !== input.revision) throw new Error(`Application packet revision conflict: current ${packet.revision}, received ${input.revision}.`);
+      if (packet.fields.some((field) => field.classification === "manual_only" && field.value.length > 0)) throw new Error("Manual-only fields must remain blank before review.");
+      const confirmIds = new Set(packet.fields.filter(({ classification }) => classification === "confirm").map(({ id }) => id));
+      const acknowledged = new Set(input.acknowledgedFieldIds);
+      if ([...confirmIds].some((id) => !acknowledged.has(id)) || [...acknowledged].some((id) => !confirmIds.has(id))) throw new Error("Every confirm field must be acknowledged by its current field ID.");
+      const nextRevision = packet.revision + 1;
+      this.database.prepare("UPDATE application_packets SET status = 'ready_for_prefill', revision = ?, updated_at = ? WHERE workspace_id = ? AND id = ? AND revision = ?").run(nextRevision, new Date().toISOString(), input.workspaceId, input.packetId, packet.revision);
+      return this.readApplicationPacket(input.workspaceId, input.packetId);
+    });
   }
 
-  async recordTraceEvent(input: { workspaceId: string; traceId: string; spanId: string; parentSpanId?: string; name: string; startedAt: string; endedAt?: string; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }): Promise<TraceEvent> {
+  async recordTraceEvent(input: { workspaceId: string; runId?: string; traceId: string; spanId: string; parentSpanId?: string; name: string; startedAt: string; endedAt?: string; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }): Promise<TraceEvent> {
     await this.requireWorkspace(input.workspaceId);
-    const parsed = traceInputSchema.parse({ traceId: input.traceId, spanId: input.spanId, parentSpanId: input.parentSpanId, name: input.name, startedAt: input.startedAt, endedAt: input.endedAt, status: input.status, attributes: input.attributes });
-    const event: TraceEvent = { id: randomUUID(), workspaceId: input.workspaceId, traceId: parsed.traceId, spanId: parsed.spanId, parentSpanId: parsed.parentSpanId ?? null, name: parsed.name, startedAt: parsed.startedAt, endedAt: parsed.endedAt ?? null, status: parsed.status, attributes: redactTraceAttributes(parsed.attributes) as Record<string, unknown> };
-    this.database.prepare("INSERT INTO trace_events(id, workspace_id, trace_id, span_id, parent_span_id, name, started_at, ended_at, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, event.workspaceId, event.traceId, event.spanId, event.parentSpanId, event.name, event.startedAt, event.endedAt, event.status, JSON.stringify(event.attributes));
+    const parsed = traceInputSchema.parse({ runId: input.runId, traceId: input.traceId, spanId: input.spanId, parentSpanId: input.parentSpanId, name: input.name, startedAt: input.startedAt, endedAt: input.endedAt, status: input.status, attributes: input.attributes });
+    if (parsed.runId) await this.getSearchRun({ workspaceId: input.workspaceId, runId: parsed.runId });
+    const event: TraceEvent = { id: randomUUID(), workspaceId: input.workspaceId, runId: parsed.runId ?? null, traceId: parsed.traceId, spanId: parsed.spanId, parentSpanId: parsed.parentSpanId ?? null, name: parsed.name, startedAt: parsed.startedAt, endedAt: parsed.endedAt ?? null, status: parsed.status, attributes: redactTraceAttributes(parsed.attributes) as Record<string, unknown> };
+    this.database.prepare("INSERT INTO trace_events(id, workspace_id, run_id, trace_id, span_id, parent_span_id, name, started_at, ended_at, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, event.workspaceId, event.runId, event.traceId, event.spanId, event.parentSpanId, event.name, event.startedAt, event.endedAt, event.status, JSON.stringify(event.attributes));
     return event;
   }
 
@@ -306,7 +334,11 @@ export class JobSearchService {
         id: packet.id,
         opportunityId: packet.opportunity_id,
         status: packet.status,
-        fields: (this.database.prepare("SELECT field_key, label, classification FROM application_fields WHERE workspace_id = ? AND packet_id = ? ORDER BY id").all(workspace.id, packet.id) as Array<{ field_key: string; label: string; classification: ApplicationFieldClassification }>).map((field) => ({ key: field.field_key, label: field.label, classification: field.classification })),
+        revision: packet.revision,
+        audit: this.auditFromRow(packet),
+        attachments: parseJson<ApplicationAttachment[]>(packet.attachments_json),
+        unknowns: parseJson<string[]>(packet.unknowns_json),
+        fields: (this.database.prepare("SELECT id, field_key, label, classification, provenance_json FROM application_fields WHERE workspace_id = ? AND packet_id = ? ORDER BY id").all(workspace.id, packet.id) as Array<{ id: string; field_key: string; label: string; classification: ApplicationFieldClassification; provenance_json: string | null }>).map((field) => ({ id: field.id, key: field.field_key, label: field.label, classification: field.classification, provenance: field.provenance_json ? parseJson<ApplicationFieldProvenance>(field.provenance_json) : null })),
         createdAt: packet.created_at,
         updatedAt: packet.updated_at
       })),
@@ -401,8 +433,12 @@ export class JobSearchService {
   private readApplicationPacket(workspaceId: string, packetId: string): ApplicationPacket {
     const row = this.database.prepare("SELECT * FROM application_packets WHERE workspace_id = ? AND id = ?").get(workspaceId, packetId) as PacketRow | undefined;
     if (!row) throw new Error(`Application packet not found: ${packetId}`);
-    const fields = this.database.prepare("SELECT id, field_key, label, value, classification FROM application_fields WHERE workspace_id = ? AND packet_id = ? ORDER BY rowid").all(workspaceId, packetId) as unknown as FieldRow[];
-    return { id: row.id, workspaceId: row.workspace_id, opportunityId: row.opportunity_id, status: row.status, fields: fields.map((field) => ({ id: field.id, key: field.field_key, label: field.label, value: field.value, classification: field.classification })), createdAt: row.created_at, updatedAt: row.updated_at };
+    const fields = this.database.prepare("SELECT id, field_key, label, value, classification, provenance_json FROM application_fields WHERE workspace_id = ? AND packet_id = ? ORDER BY rowid").all(workspaceId, packetId) as unknown as FieldRow[];
+    return { id: row.id, workspaceId: row.workspace_id, opportunityId: row.opportunity_id, status: row.status, revision: row.revision, audit: this.auditFromRow(row), attachments: parseJson<ApplicationAttachment[]>(row.attachments_json), unknowns: parseJson<string[]>(row.unknowns_json), fields: fields.map((field) => ({ id: field.id, key: field.field_key, label: field.label, value: field.value, classification: field.classification, provenance: field.provenance_json ? parseJson<ApplicationFieldProvenance>(field.provenance_json) : null })), createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  private auditFromRow(row: PacketRow): ApplicationAudit | null {
+    return row.audit_version && row.audit_retrieved_at && row.audit_destination_url && row.audit_status ? { version: row.audit_version, retrievedAt: row.audit_retrieved_at, destinationUrl: row.audit_destination_url, status: row.audit_status } : null;
   }
 
   private requireOpportunity(workspaceId: string, opportunityId: string) {
@@ -434,5 +470,5 @@ export class JobSearchService {
   private workspaceFromRow(row: WorkspaceRow): Workspace { const directory = resolveInside(this.dataRoot, "workspaces", row.id); return { id: row.id, name: row.name, attachmentDirectory: resolveInside(directory, "attachments"), exportDirectory: resolveInside(directory, "exports"), createdAt: row.created_at } }
   private resumeFromRow(row: ResumeRow): ImportedResume { return { id: row.id, workspaceId: row.workspace_id, originalName: row.original_name, storedPath: row.stored_path, sha256: row.sha256, extractedText: row.extracted_text, createdAt: row.created_at } }
   private searchRunFromRow(row: SearchRunRow): SearchRun { return { id: row.id, workspaceId: row.workspace_id, profileVersion: row.profile_version, searchBriefVersion: row.search_brief_version, preferenceVersion: row.preference_version, status: row.status, startedAt: row.started_at, finishedAt: row.finished_at } }
-  private traceFromRow(row: TraceRow): TraceEvent { return { id: row.id, workspaceId: row.workspace_id, traceId: row.trace_id, spanId: row.span_id, parentSpanId: row.parent_span_id, name: row.name, startedAt: row.started_at, endedAt: row.ended_at, status: row.status, attributes: parseJson(row.attributes_json) } }
+  private traceFromRow(row: TraceRow): TraceEvent { return { id: row.id, workspaceId: row.workspace_id, runId: row.run_id, traceId: row.trace_id, spanId: row.span_id, parentSpanId: row.parent_span_id, name: row.name, startedAt: row.started_at, endedAt: row.ended_at, status: row.status, attributes: parseJson(row.attributes_json) } }
 }

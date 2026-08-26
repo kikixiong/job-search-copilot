@@ -122,7 +122,7 @@ test("returns a redacted, versioned recovery snapshot through workspace_export w
       status: "draft",
       fields: [{ key: "email", label: "Email", value: "private@example.test" }, { key: "cover_letter", label: "Cover letter", value: "Private Cover Letter" }]
     });
-    await registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id });
+    await registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: packet.fields.filter((field: { classification: string }) => field.classification === "confirm").map((field: { id: string }) => field.id) });
 
     const exported = await registry.invoke("workspace_export", { workspaceId: workspace.id, format: "json", includeContent: true });
     assert.deepEqual(TOOL_NAMES, expectedTools);
@@ -134,7 +134,9 @@ test("returns a redacted, versioned recovery snapshot through workspace_export w
     assert.equal(exported.snapshot.runs.find((run: { id: string }) => run.id === firstRun.id).summary.opportunityCount, 1);
     assert.equal(exported.snapshot.feedback[0].reason, null);
     assert.equal(exported.snapshot.applicationPackets[0].status, "ready_for_prefill");
-    assert.deepEqual(exported.snapshot.applicationPackets[0].fields.find((field: { key: string }) => field.key === "email"), { key: "email", label: "Email", classification: "safe" });
+    const emailField = exported.snapshot.applicationPackets[0].fields.find((field: { key: string }) => field.key === "email");
+    assert.deepEqual({ key: emailField.key, label: emailField.label, classification: emailField.classification, provenance: emailField.provenance }, { key: "email", label: "Email", classification: "safe", provenance: null });
+    assert.match(emailField.id, /^[0-9a-f-]{36}$/i);
     const serialized = JSON.stringify(exported.snapshot);
     for (const secret of ["private@example.test", "Private Cover Letter"]) assert.equal(serialized.includes(secret), false);
   });
@@ -189,9 +191,29 @@ test("feedback_record preserves an optional reason without changing the twelve-t
     const profile = await registry.invoke("profile_commit", { workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
     const run = await registry.invoke("search_run_begin", { workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
     const batch = await registry.invoke("search_record_batch", { workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "Synthetic", title: "Engineer", location: "Remote", eligibility: "unknown", evidence: { sourceUrl: "https://example.test/job", sourceType: "community", status: "lead" } }] });
+    await assert.rejects(registry.invoke("feedback_record", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "information_error" }), /reason|required|原因/i);
     const feedback = await registry.invoke("feedback_record", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "information_error", reason: "来源信息不准确" });
     assert.equal(feedback.reason, "来源信息不准确");
     assert.equal(feedback.preferenceVersion, null);
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  });
+});
+
+test("MCP packet review uses the same revision and stable-field service invariant", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "Packet MCP invariant" });
+    await assert.rejects(registry.invoke("application_packet_upsert", { workspaceId: workspace.id, status: "draft", fields: [{ key: "signature", label: "签名", value: "not allowed" }] }), /manual.only|blank|手动/i);
+    const packet = await registry.invoke("application_packet_upsert", {
+      workspaceId: workspace.id,
+      status: "draft",
+      fields: [{ key: "salary", label: "期望薪资", value: "100", provenance: { source: "user_confirmed", locator: "conversation.salary", reviewed: true, sensitive: false } }],
+      attachments: [], unknowns: []
+    });
+    const confirm = packet.fields[0];
+    await assert.rejects(registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id }), /revision|acknowledged|invalid|required/i);
+    const reviewed = await registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: [confirm.id] });
+    assert.equal(reviewed.status, "ready_for_prefill");
+    assert.equal(reviewed.revision, packet.revision + 1);
     assert.deepEqual(TOOL_NAMES, expectedTools);
   });
 });

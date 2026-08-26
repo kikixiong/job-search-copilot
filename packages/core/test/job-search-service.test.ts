@@ -281,14 +281,14 @@ test("updates preferences only from confirmed eligible feedback with the matchin
       opportunities: [{ kind: "job", company: "A", title: "Role", location: "Remote", eligibility: "eligible", evidence: { sourceUrl: "https://example/a", sourceType: "community", status: "lead" } }]
     });
     const opportunityId = batch.opportunities[0].id;
-    const ignored = await service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "information_error", confirmedPreferenceSnapshot: { preferredLocations: ["Remote"] }, preferenceBaseVersion: null });
+    const ignored = await service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "information_error", reason: "来源错误", confirmedPreferenceSnapshot: { preferredLocations: ["Remote"] }, preferenceBaseVersion: null });
     assert.equal(ignored.preferenceVersion, null);
     const unconfirmed = await service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "interested" });
     assert.equal(unconfirmed.preferenceVersion, null);
     const confirmed = await service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "interested", confirmedPreferenceSnapshot: { preferredLocations: ["Remote"] }, preferenceBaseVersion: null });
     assert.equal(confirmed.preferenceVersion, 1);
     await assert.rejects(
-      service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "rejected", confirmedPreferenceSnapshot: { preferredLocations: ["London"] }, preferenceBaseVersion: null }),
+      service.recordFeedback({ workspaceId: workspace.id, opportunityId, disposition: "rejected", reason: "地点不匹配", confirmedPreferenceSnapshot: { preferredLocations: ["London"] }, preferenceBaseVersion: null }),
       /preference version conflict/i
     );
     const oldRun = await service.getSearchRun({ workspaceId: workspace.id, runId: run.id });
@@ -322,6 +322,62 @@ test("persists an optional feedback reason and exposes a redacted snapshot witho
   });
 });
 
+test("enforces negative feedback reasons as a service invariant", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Feedback invariant" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
+    const batch = await service.recordSearchBatch({ workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "Synthetic", title: "Engineer", location: "Remote", eligibility: "unknown", evidence: { sourceUrl: "https://example.test/job", sourceType: "community", status: "lead" } }] });
+    for (const disposition of ["rejected", "information_error", "closed"] as const) {
+      await assert.rejects(service.recordFeedback({ workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition }), /reason|required|原因/i);
+      await assert.rejects(service.recordFeedback({ workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition, reason: "   " }), /reason|required|原因|too.small/i);
+    }
+    assert.equal((await service.getWorkspaceSnapshot({ workspaceId: workspace.id })).feedback.length, 0);
+  });
+});
+
+test("rejects manual-only values, duplicate keys, and stale or incomplete packet review", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Packet invariants" });
+    await assert.rejects(service.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: [{ key: "signature", label: "签名", value: "Synthetic Person" }] }), /manual.only|blank|empty|手动/i);
+    await assert.rejects(service.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: [{ key: "signature", label: "签名", value: "   " }] }), /manual.only|blank|empty|手动/i);
+    await assert.rejects(service.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: [{ key: "salary", label: "薪资一", value: "100" }, { key: "salary", label: "薪资二", value: "200" }] }), /duplicate|unique|重复/i);
+
+    const fields = [
+      { key: "email", label: "邮箱", value: "private@example.test", provenance: { source: "profile" as const, locator: "profile.contact.email", reviewed: true, sensitive: false } },
+      { key: "salary", label: "期望薪资", value: "100", provenance: { source: "user_confirmed" as const, locator: "conversation.salary", reviewed: true, sensitive: false } },
+      { key: "signature", label: "签名", value: "", provenance: { source: "unknown" as const, locator: "live-form.signature", reviewed: false, sensitive: true } }
+    ];
+    const packet = await service.upsertApplicationPacket({
+      workspaceId: workspace.id,
+      status: "draft",
+      fields,
+      attachments: [{ name: "resume.pdf", status: "ready", locator: "packet.attachments.resume" }],
+      unknowns: ["推荐人要求待核实"],
+      audit: { version: 2, retrievedAt: new Date().toISOString(), destinationUrl: "https://boards.greenhouse.io/synthetic/jobs/1", status: "verified" }
+    } as any);
+    const confirm = packet.fields.find(({ classification }) => classification === "confirm")!;
+    assert.equal(packet.revision, 1);
+    assert.match(confirm.id, /^[0-9a-f-]{36}$/i);
+    assert.equal(confirm.provenance?.locator, "conversation.salary");
+    assert.equal(packet.attachments[0].name, "resume.pdf");
+    assert.deepEqual(packet.unknowns, ["推荐人要求待核实"]);
+
+    const updated = await service.upsertApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, status: "reviewed", fields });
+    const currentConfirm = updated.fields.find(({ classification }) => classification === "confirm")!;
+    assert.equal(updated.revision, 2);
+    assert.equal(currentConfirm.id, confirm.id);
+
+    await assert.rejects(service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: updated.revision, acknowledgedFieldIds: [] } as any), /confirm|acknowledge|确认/i);
+    await assert.rejects(service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: [confirm.id] } as any), /revision|stale|版本/i);
+    await assert.rejects(service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: updated.revision, acknowledgedFieldIds: ["00000000-0000-4000-8000-000000000000"] } as any), /confirm|acknowledge|field|确认/i);
+    const reviewed = await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: updated.revision, acknowledgedFieldIds: [currentConfirm.id] } as any);
+    assert.equal(reviewed.status, "ready_for_prefill");
+    assert.equal(reviewed.revision, 3);
+    assert.equal(reviewed.fields.find(({ classification }) => classification === "manual_only")?.value, "");
+  });
+});
+
 test("classifies sensitive application fields and rejects any submitted packet status", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Packets" });
@@ -331,14 +387,14 @@ test("classifies sensitive application fields and rejects any submitted packet s
       fields: [
         { key: "full_name", label: "Full name", value: "Synthetic Person" },
         { key: "salary_expectation", label: "Salary expectation", value: "100" },
-        { key: "eeo_gender", label: "EEO gender", value: "Prefer not to say" },
-        { key: "disability_status", label: "Disability", value: "Prefer not to say" },
-        { key: "veteran_status", label: "Veteran", value: "Prefer not to say" },
-        { key: "legal_consent", label: "Legal consent", value: "yes" },
-        { key: "signature", label: "Signature", value: "Synthetic Person" },
-        { key: "captcha", label: "CAPTCHA", value: "answer" },
-        { key: "mfa", label: "MFA", value: "123456" },
-        { key: "final_submit", label: "Final submit", value: "yes" }
+        { key: "eeo_gender", label: "EEO gender", value: "" },
+        { key: "disability_status", label: "Disability", value: "" },
+        { key: "veteran_status", label: "Veteran", value: "" },
+        { key: "legal_consent", label: "Legal consent", value: "" },
+        { key: "signature", label: "Signature", value: "" },
+        { key: "captcha", label: "CAPTCHA", value: "" },
+        { key: "mfa", label: "MFA", value: "" },
+        { key: "final_submit", label: "Final submit", value: "" }
       ]
     });
     assert.equal(packet.fields.find(({ key }) => key === "full_name")?.classification, "safe");
@@ -346,7 +402,7 @@ test("classifies sensitive application fields and rejects any submitted packet s
     for (const key of ["eeo_gender", "disability_status", "veteran_status", "legal_consent", "signature", "captcha", "mfa", "final_submit"]) {
       assert.equal(packet.fields.find((field) => field.key === key)?.classification, "manual_only");
     }
-    const reviewed = await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id });
+    const reviewed = await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: packet.fields.filter(({ classification }) => classification === "confirm").map(({ id }) => id) });
     assert.equal(reviewed.status, "ready_for_prefill");
     await assert.rejects(
       service.upsertApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, status: "submitted" as never, fields: [] }),
@@ -383,6 +439,24 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
       assert.equal(serialized.includes(secret), false);
     }
     assert.match(serialized, /\[REDACTED\]/);
+  });
+});
+
+test("persists trace run identity and rejects cross-workspace run association", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Trace run binding" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const first = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["first"], locations: [] }, preferenceVersion: null });
+    const second = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["second"], locations: [] }, preferenceVersion: null });
+    for (const [index, runId] of [first.id, second.id].entries()) {
+      await service.recordTraceEvent({ workspaceId: workspace.id, runId, traceId: `${index + 1}`.repeat(32), spanId: `${index + 1}`.repeat(16), name: "search.source.failed", startedAt: `2026-01-0${index + 1}T00:00:00.000Z`, status: "error", attributes: { source: `source-${index + 1}` } });
+    }
+    const foreign = await service.openWorkspace({ name: "Foreign trace run" });
+    const foreignProfile = await service.commitProfile({ workspaceId: foreign.id, baseVersion: null, profile: { headline: "Other", skills: [], positioningTracks: [] } });
+    const foreignRun = await service.beginSearchRun({ workspaceId: foreign.id, profileVersion: foreignProfile.version, searchBrief: { keywords: ["other"], locations: [] }, preferenceVersion: null });
+    await assert.rejects(service.recordTraceEvent({ workspaceId: workspace.id, runId: foreignRun.id, traceId: "a".repeat(32), spanId: "b".repeat(16), name: "search.source.failed", startedAt: "2026-01-03T00:00:00.000Z", status: "error", attributes: {} }), /run|not found/i);
+    const snapshot = await service.getWorkspaceSnapshot({ workspaceId: workspace.id });
+    assert.deepEqual(snapshot.trace.map(({ runId }) => runId), [first.id, second.id]);
   });
 });
 
@@ -424,7 +498,7 @@ test("returns a redacted recovery snapshot only when a JSON export requests cont
       status: "draft",
       fields: [{ key: "email", label: "Email", value: "private@example.test" }, { key: "cover_letter", label: "Cover letter", value: "Private Cover Letter" }]
     });
-    await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id });
+    await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: packet.fields.filter(({ classification }) => classification === "confirm").map(({ id }) => id) });
 
     const legacy = await service.exportWorkspace({ workspaceId: workspace.id, format: "json" });
     assert.equal("snapshot" in legacy, false);
@@ -562,9 +636,9 @@ test("classifies common application-submit key and label variants as manual-only
       workspaceId: workspace.id,
       status: "draft",
       fields: [
-        { key: "submit_application", label: "Continue", value: "yes" },
-        { key: "primary_action", label: "Submit application", value: "yes" },
-        { key: "application-submit", label: "Apply now", value: "yes" }
+        { key: "submit_application", label: "Continue", value: "" },
+        { key: "primary_action", label: "Submit application", value: "" },
+        { key: "application-submit", label: "Apply now", value: "" }
       ]
     });
     assert.deepEqual(packet.fields.map(({ classification }) => classification), ["manual_only", "manual_only", "manual_only"]);
@@ -598,6 +672,23 @@ test("serializes concurrent migration startup and rejects a database from a futu
   assert.throws(() => new JobSearchService({ dataRoot: futureRoot }), /future|newer|unsupported/i);
 });
 
+test("migration clears historical manual-only values before the service can read them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-manual-cleanup-"));
+  const first = new JobSearchService({ dataRoot: root });
+  const workspace = await first.openWorkspace({ name: "Manual cleanup" });
+  const packet = await first.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: [{ key: "signature", label: "Signature", value: "" }] });
+  first.close();
+  const dirty = new DatabaseSync(join(root, "job-search.sqlite"));
+  dirty.prepare("UPDATE application_fields SET value = ? WHERE packet_id = ?").run("   ", packet.id);
+  dirty.prepare("DELETE FROM schema_migrations WHERE version = 6").run();
+  dirty.close();
+  const migrated = new JobSearchService({ dataRoot: root });
+  migrated.close();
+  const checked = new DatabaseSync(join(root, "job-search.sqlite"), { readOnly: true });
+  assert.equal((checked.prepare("SELECT value FROM application_fields WHERE packet_id = ?").get(packet.id) as { value: string }).value, "");
+  checked.close();
+});
+
 test("upgrades a version 2 database and backfills opportunity aliases", async () => {
   const root = await mkdtemp(join(tmpdir(), "job-search-v2-alias-migration-"));
   const databasePath = join(root, "job-search.sqlite");
@@ -623,7 +714,7 @@ test("upgrades a version 2 database and backfills opportunity aliases", async ()
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
   const database = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 4);
+  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 6);
   assert.equal((database.prepare("SELECT COUNT(*) AS count FROM opportunity_aliases WHERE workspace_id = ? AND opportunity_id = ?").get("workspace-v2", "opportunity-v2") as { count: number }).count, 3);
   database.close();
 });

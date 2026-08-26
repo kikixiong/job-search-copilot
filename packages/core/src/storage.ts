@@ -246,6 +246,52 @@ const migrations = [
       created_at TEXT NOT NULL
     );
     ALTER TABLE feedback ADD COLUMN reason TEXT;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS application_packets (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      opportunity_id TEXT REFERENCES opportunities(id) ON DELETE SET NULL,
+      status TEXT NOT NULL CHECK(status IN ('draft', 'reviewed', 'ready_for_prefill')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS application_fields (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      packet_id TEXT NOT NULL REFERENCES application_packets(id) ON DELETE CASCADE,
+      field_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      value TEXT NOT NULL,
+      classification TEXT NOT NULL CHECK(classification IN ('safe', 'confirm', 'manual_only'))
+    );
+    CREATE TABLE IF NOT EXISTS trace_events (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      trace_id TEXT NOT NULL,
+      span_id TEXT NOT NULL,
+      parent_span_id TEXT,
+      name TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT,
+      status TEXT NOT NULL CHECK(status IN ('unset', 'ok', 'error')),
+      attributes_json TEXT NOT NULL
+    );
+    ALTER TABLE application_packets ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE application_packets ADD COLUMN audit_version INTEGER;
+    ALTER TABLE application_packets ADD COLUMN audit_retrieved_at TEXT;
+    ALTER TABLE application_packets ADD COLUMN audit_destination_url TEXT;
+    ALTER TABLE application_packets ADD COLUMN audit_status TEXT CHECK(audit_status IN ('verified', 'failed'));
+    ALTER TABLE application_packets ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE application_packets ADD COLUMN unknowns_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE application_fields ADD COLUMN provenance_json TEXT;
+    ALTER TABLE trace_events ADD COLUMN run_id TEXT REFERENCES search_runs(id) ON DELETE SET NULL;
+    DELETE FROM application_fields
+      WHERE rowid NOT IN (SELECT MIN(rowid) FROM application_fields GROUP BY workspace_id, packet_id, field_key);
+    CREATE UNIQUE INDEX application_fields_packet_key_idx ON application_fields(workspace_id, packet_id, field_key);
+  `,
+  `
+    UPDATE application_fields SET value = '' WHERE classification = 'manual_only' AND value <> '';
   `
 ];
 
