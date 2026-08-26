@@ -2,6 +2,7 @@ export { JobSearchService } from "./service.js";
 export type {
   ApplicationField,
   ApplicationFieldProvenance,
+  ApplicationGuidanceDecision,
   ApplicationAudit,
   ApplicationAttachment,
   ApplicationPacket,
@@ -10,6 +11,9 @@ export type {
   JobSearchServiceOptions,
   MatchAssessment,
   Opportunity,
+  PublicOpportunity,
+  PublicSourceObservation,
+  RecoveryApplicationPacket,
   SearchRun,
   SourceObservation,
   TraceEvent,
@@ -26,6 +30,8 @@ export {
   opportunityKindSchema,
   preferenceSnapshotDataSchema,
   profileDataSchema,
+  redactPublicText,
+  redactPublicUrl,
   searchBriefDataSchema,
   sourceObservationInputSchema
 } from "./domain.js";

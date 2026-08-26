@@ -11,6 +11,8 @@ import {
   opportunityKeys,
   preferenceSnapshotDataSchema,
   profileDataSchema,
+  redactPublicText,
+  redactPublicUrl,
   redactTraceAttributes,
   searchBriefDataSchema,
   type ApplicationFieldClassification,
@@ -39,6 +41,10 @@ export interface ApplicationAudit { version: number; retrievedAt: string; destin
 export interface ApplicationAttachment { name: string; status: "ready" | "missing" | "manual_only"; locator: string | null }
 export interface ApplicationPacket { id: string; workspaceId: string; opportunityId: string | null; status: "draft" | "reviewed" | "ready_for_prefill"; revision: number; audit: ApplicationAudit | null; attachments: ApplicationAttachment[]; unknowns: string[]; fields: ApplicationField[]; createdAt: string; updatedAt: string }
 export interface TraceEvent { id: string; workspaceId: string; runId: string | null; traceId: string; spanId: string; parentSpanId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }
+export interface ApplicationGuidanceDecision { mode: "reviewed" | "copy"; reasons: string[]; auditVersion: number | null }
+export type PublicSourceObservation = Omit<SourceObservation, "sourceUrl"> & { sourceUrl: string | null };
+export type PublicOpportunity = Omit<Opportunity, "canonicalApplyUrl" | "sourceObservations"> & { canonicalApplyUrl: string | null; sourceObservations: PublicSourceObservation[] };
+export interface RecoveryApplicationPacket { id: string; opportunityId: string | null; status: ApplicationPacket["status"]; revision: number; audit: (Omit<ApplicationAudit, "destinationUrl"> & { destinationUrl: string | null }) | null; guidance: ApplicationGuidanceDecision; attachments: ApplicationAttachment[]; unknowns: string[]; fields: Array<Pick<ApplicationField, "id" | "key" | "label" | "classification" | "provenance">>; createdAt: string; updatedAt: string }
 export interface WorkspaceRecoverySnapshot {
   workspace: { id: string; name: string; createdAt: string };
   latestProfile: { version: number; headline: string; skills: string[]; positioningTracks: Array<{ name: string; summary: string; targetRoles: string[] }>; createdAt: string } | null;
@@ -47,10 +53,12 @@ export interface WorkspaceRecoverySnapshot {
   resumeImported: boolean;
   runs: Array<SearchRun & { searchBrief: SearchBriefData; summary: { queryCount: number; sourceCount: number; opportunityCount: number } }>;
   feedback: Array<{ id: string; opportunityId: string; disposition: FeedbackDisposition; preferenceVersion: number | null; reason: string | null; createdAt: string }>;
-  applicationPackets: Array<{ id: string; opportunityId: string | null; status: ApplicationPacket["status"]; revision: number; audit: ApplicationAudit | null; attachments: ApplicationAttachment[]; unknowns: string[]; fields: Array<Pick<ApplicationField, "id" | "key" | "label" | "classification" | "provenance">>; createdAt: string; updatedAt: string }>;
-  opportunities: Opportunity[];
+  applicationPackets: RecoveryApplicationPacket[];
+  opportunities: PublicOpportunity[];
   trace: TraceEvent[];
 }
+type InternalRecoveryApplicationPacket = Omit<RecoveryApplicationPacket, "audit" | "guidance"> & { audit: ApplicationAudit | null };
+type InternalWorkspaceRecoverySnapshot = Omit<WorkspaceRecoverySnapshot, "applicationPackets" | "opportunities"> & { applicationPackets: InternalRecoveryApplicationPacket[]; opportunities: Opportunity[] };
 
 type WorkspaceRow = { id: string; name: string; created_at: string };
 type ResumeRow = { id: string; workspace_id: string; original_name: string; stored_path: string; sha256: string; extracted_text: string; created_at: string };
@@ -75,6 +83,8 @@ const traceInputSchema = z.object({
 
 function parseJson<T>(value: string) { return JSON.parse(value) as T }
 function csvCell(value: unknown) { return `"${String(value ?? "").replaceAll('"', '""')}"` }
+const publicTraceFields = new Set(["queryText", "source", "retrievedAt", "sourceTier", "sourceUrl", "locator", "lifecycle", "confidence", "dedupDecision", "eligibility", "matchExplanation", "failure", "queryCount", "sourceCount", "resultCount", "beforeScope", "afterScope"]);
+const reviewedAtsHosts = new Set(["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]);
 
 export class JobSearchService {
   readonly dataRoot: string;
@@ -269,20 +279,20 @@ export class JobSearchService {
 
   async getWorkspaceSnapshot(input: { workspaceId: string }): Promise<WorkspaceRecoverySnapshot> {
     const workspace = await this.requireWorkspace(input.workspaceId);
-    return this.recoverySnapshot(workspace);
+    return this.publicRecoverySnapshot(this.internalRecoverySnapshot(workspace));
   }
 
   async exportWorkspace(input: { workspaceId: string; format: "json" | "markdown" | "csv"; includeContent?: boolean }) {
     const workspace = await this.requireWorkspace(input.workspaceId);
     if (input.includeContent && input.format !== "json") throw new Error("Structured content is available only for JSON exports.");
     const opportunities = await this.queryOpportunities({ workspaceId: input.workspaceId });
-    const profiles = this.database.prepare("SELECT version, headline, skills_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version").all(input.workspaceId);
-    const runs = this.database.prepare("SELECT id, profile_version, search_brief_version, preference_version, status, started_at, finished_at FROM search_runs WHERE workspace_id = ? ORDER BY started_at").all(input.workspaceId);
     let contents: string;
     let extension: string;
+    let publicSnapshot: WorkspaceRecoverySnapshot | undefined;
     if (input.format === "json") {
       extension = "json";
-      contents = JSON.stringify({ workspace: { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt }, profiles, runs, opportunities }, null, 2);
+      publicSnapshot = this.publicRecoverySnapshot(this.internalRecoverySnapshot(workspace));
+      contents = JSON.stringify(publicSnapshot, null, 2);
     } else if (input.format === "markdown") {
       extension = "md";
       contents = [`# ${workspace.name}`, "", "## Opportunities", "", ...opportunities.map((item) => `- **${item.title}** — ${item.company} (${item.location}); ${item.eligibility}; ${item.evidenceStatus}`), ""].join("\n");
@@ -293,10 +303,10 @@ export class JobSearchService {
     const path = resolveInside(workspace.exportDirectory, `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}.${extension}`);
     await writeGeneratedFile(this.dataRoot, path, contents);
     if (!input.includeContent) return { format: input.format, path };
-    return { format: input.format, path, snapshot: this.recoverySnapshot(workspace) };
+    return { format: input.format, path, snapshot: publicSnapshot! };
   }
 
-  private recoverySnapshot(workspace: Workspace): WorkspaceRecoverySnapshot {
+  private internalRecoverySnapshot(workspace: Workspace): InternalWorkspaceRecoverySnapshot {
     const latestProfile = this.database.prepare("SELECT id, version, headline, skills_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { id: string; version: number; headline: string; skills_json: string; created_at: string } | undefined;
     const latestSearchBrief = this.database.prepare("SELECT version, data_json, created_at FROM search_brief_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
     const latestPreference = this.database.prepare("SELECT version, data_json, created_at FROM preference_snapshot_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
@@ -344,6 +354,64 @@ export class JobSearchService {
       })),
       opportunities: opportunities.map((row) => this.opportunityFromRow(row)),
       trace: (this.database.prepare("SELECT * FROM trace_events WHERE workspace_id = ? ORDER BY started_at, id").all(workspace.id) as unknown as TraceRow[]).map((row) => this.traceFromRow(row))
+    };
+  }
+
+  private applicationGuidance(packet: InternalRecoveryApplicationPacket, opportunity: Opportunity | undefined, now = Date.now()): ApplicationGuidanceDecision {
+    const reasons: string[] = [];
+    if (!opportunity || packet.opportunityId !== opportunity.id) reasons.push("opportunity_mismatch");
+    if (opportunity?.evidenceStatus !== "verified_open") reasons.push("opportunity_not_verified_open");
+    if (!packet.audit || packet.audit.status !== "verified") reasons.push("audit_not_verified");
+    const retrievedAt = packet.audit ? Date.parse(packet.audit.retrievedAt) : Number.NaN;
+    if (!Number.isFinite(retrievedAt) || retrievedAt > now || now - retrievedAt > 24 * 60 * 60 * 1000) reasons.push("audit_not_current");
+    const latestOfficial = opportunity?.sourceObservations.filter(({ sourceType }) => sourceType === "official").sort((a, b) => a.observedAt.localeCompare(b.observedAt)).at(-1);
+    if (!latestOfficial || latestOfficial.status !== "open") reasons.push("official_observation_not_open");
+    let canonical: URL | null = null;
+    let official: URL | null = null;
+    let audited: URL | null = null;
+    try {
+      canonical = opportunity?.canonicalApplyUrl ? new URL(opportunity.canonicalApplyUrl) : null;
+      official = latestOfficial ? new URL(latestOfficial.sourceUrl) : null;
+      audited = packet.audit ? new URL(packet.audit.destinationUrl) : null;
+    } catch { reasons.push("destination_invalid"); }
+    if (!canonical || !official || !audited) {
+      if (!reasons.includes("destination_invalid")) reasons.push("destination_invalid");
+    } else {
+      if (canonical.protocol !== "https:" || !reviewedAtsHosts.has(canonical.hostname)) reasons.push("ats_not_reviewed");
+      if (canonical.toString() !== official.toString() || canonical.toString() !== audited.toString()) reasons.push("destination_mismatch");
+    }
+    if (!packet.fields.filter(({ classification }) => classification !== "manual_only").every(({ provenance }) => provenance?.reviewed === true && provenance.sensitive === false)) reasons.push("field_provenance_not_reviewed");
+    return { mode: reasons.length ? "copy" : "reviewed", reasons: [...new Set(reasons)], auditVersion: packet.audit?.version ?? null };
+  }
+
+  private publicRecoverySnapshot(snapshot: InternalWorkspaceRecoverySnapshot): WorkspaceRecoverySnapshot {
+    const opportunities: PublicOpportunity[] = snapshot.opportunities.map((item) => ({
+      ...item,
+      company: redactPublicText(item.company), title: redactPublicText(item.title), location: redactPublicText(item.location),
+      canonicalApplyUrl: redactPublicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? redactPublicText(item.requisitionId) : null,
+      sourceObservations: item.sourceObservations.map((observation) => ({ ...observation, sourceUrl: redactPublicUrl(observation.sourceUrl) })),
+      match: item.match ? { score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [redactPublicText(key), value])), reasons: item.match.reasons.map(redactPublicText), gaps: item.match.gaps.map(redactPublicText), unknowns: item.match.unknowns.map(redactPublicText) } : null
+    }));
+    return {
+      workspace: { ...snapshot.workspace, name: redactPublicText(snapshot.workspace.name) },
+      resumeImported: snapshot.resumeImported,
+      latestProfile: snapshot.latestProfile ? { ...snapshot.latestProfile, headline: redactPublicText(snapshot.latestProfile.headline), skills: snapshot.latestProfile.skills.map(redactPublicText), positioningTracks: snapshot.latestProfile.positioningTracks.map((track) => ({ name: redactPublicText(track.name), summary: redactPublicText(track.summary), targetRoles: track.targetRoles.map(redactPublicText) })) } : null,
+      latestSearchBrief: snapshot.latestSearchBrief ? { ...snapshot.latestSearchBrief, data: { keywords: snapshot.latestSearchBrief.data.keywords.map(redactPublicText), locations: snapshot.latestSearchBrief.data.locations.map(redactPublicText) } } : null,
+      latestPreference: snapshot.latestPreference ? { ...snapshot.latestPreference, data: { preferredLocations: snapshot.latestPreference.data.preferredLocations.map(redactPublicText), preferredRoles: snapshot.latestPreference.data.preferredRoles.map(redactPublicText) } } : null,
+      runs: snapshot.runs.map((run) => ({ ...run, searchBrief: { keywords: run.searchBrief.keywords.map(redactPublicText), locations: run.searchBrief.locations.map(redactPublicText) } })),
+      feedback: snapshot.feedback.map((item) => ({ ...item, reason: item.reason ? redactPublicText(item.reason) : null })),
+      applicationPackets: snapshot.applicationPackets.map((packet) => ({ ...packet, audit: packet.audit ? { ...packet.audit, destinationUrl: redactPublicUrl(packet.audit.destinationUrl) } : null, guidance: this.applicationGuidance(packet, snapshot.opportunities.find(({ id }) => id === packet.opportunityId)), attachments: packet.attachments.map((item) => ({ ...item, name: redactPublicText(item.name), locator: item.locator ? redactPublicText(item.locator) : null })), unknowns: packet.unknowns.map(redactPublicText), fields: packet.fields.map((field) => ({ ...field, key: redactPublicText(field.key), label: redactPublicText(field.label), provenance: field.provenance ? { ...field.provenance, locator: redactPublicText(field.provenance.locator) } : null })) })),
+      opportunities,
+      trace: snapshot.trace.map((event) => {
+        const attributes: Record<string, string | number | boolean | null> = {};
+        for (const [key, value] of Object.entries(event.attributes)) {
+          if (!publicTraceFields.has(key)) continue;
+          if (key === "sourceUrl") attributes[key] = typeof value === "string" ? redactPublicUrl(value) : null;
+          else if (typeof value === "string") attributes[key] = redactPublicText(value);
+          else if (typeof value === "number" || typeof value === "boolean" || value === null) attributes[key] = value;
+        }
+        return { ...event, name: redactPublicText(event.name), attributes };
+      })
     };
   }
 

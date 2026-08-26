@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { feedbackDispositionSchema, JobSearchService, type WorkspaceRecoverySnapshot } from "@kikixiong/job-search-copilot-core";
+import { feedbackDispositionSchema, JobSearchService, redactPublicText as safeText, redactPublicUrl as publicUrl, type WorkspaceRecoverySnapshot } from "@kikixiong/job-search-copilot-core";
 import { z } from "zod";
 
 const feedbackInput = z.object({
@@ -38,29 +38,6 @@ function json(response: ServerResponse, status: number, body: unknown) {
   response.end(JSON.stringify(body));
 }
 
-const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const phonePattern = /(?:\+?\d[\d .()-]{7,}\d)/g;
-const jwtPattern = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
-const apiKeyPattern = /\b(?:sk|pk|api)[-_][A-Za-z0-9_-]{8,}\b/gi;
-const namedSecretPattern = /\b(?:api[_-]?key|access[_-]?token|secret)\s*[:=]\s*[^\s,;]+/gi;
-const localPathPattern = /(?:file:\/\/[^\s]+|\\\\[^\s\\]+\\[^\s]+|[A-Za-z]:\\[^\s]+|\/(?:Volumes|mnt|srv|Users|home|tmp|var|private|opt|etc)\/[^\s]+)/i;
-
-function safeText(value: string) {
-  if (localPathPattern.test(value)) return "[REDACTED]";
-  return value.replace(emailPattern, "[REDACTED]").replace(phonePattern, "[REDACTED]").replace(jwtPattern, "[REDACTED]").replace(apiKeyPattern, "[REDACTED]").replace(namedSecretPattern, "[REDACTED]");
-}
-
-function publicUrl(value: string | null) {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    url.username = ""; url.password = ""; url.hash = "";
-    for (const [key, parameter] of [...url.searchParams.entries()]) if (/(token|api[_-]?key|secret|signature|auth|credential|password)/i.test(key) || safeText(parameter) !== parameter) url.searchParams.delete(key);
-    return url.toString();
-  } catch { return null; }
-}
-
 const traceFields = new Set(["queryText", "source", "retrievedAt", "sourceTier", "sourceUrl", "locator", "lifecycle", "confidence", "dedupDecision", "eligibility", "matchExplanation", "failure", "queryCount", "sourceCount", "resultCount", "beforeScope", "afterScope"]);
 function publicTraceFields(attributes: Record<string, unknown>) {
   const fields: Record<string, string | number | boolean | null> = {};
@@ -82,7 +59,7 @@ function viewerSnapshot(snapshot: WorkspaceRecoverySnapshot) {
     latestPreference: snapshot.latestPreference ? { version: snapshot.latestPreference.version, data: { preferredLocations: snapshot.latestPreference.data.preferredLocations.map(safeText), preferredRoles: snapshot.latestPreference.data.preferredRoles.map(safeText) }, createdAt: snapshot.latestPreference.createdAt } : null,
     runs: snapshot.runs.map((run) => ({ id: run.id, profileVersion: run.profileVersion, searchBriefVersion: run.searchBriefVersion, preferenceVersion: run.preferenceVersion, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, searchBrief: { keywords: run.searchBrief.keywords.map(safeText), locations: run.searchBrief.locations.map(safeText) }, summary: run.summary })),
     feedback: snapshot.feedback.map((item) => ({ id: item.id, opportunityId: item.opportunityId, disposition: item.disposition, reason: item.reason ? safeText(item.reason) : null, createdAt: item.createdAt })),
-    applicationPackets: snapshot.applicationPackets.map((packet) => ({ id: packet.id, opportunityId: packet.opportunityId, status: packet.status, revision: packet.revision, audit: packet.audit ? { version: packet.audit.version, retrievedAt: packet.audit.retrievedAt, destinationUrl: publicUrl(packet.audit.destinationUrl), status: packet.audit.status } : null, attachments: packet.attachments.map((item) => ({ name: safeText(item.name), status: item.status, locator: item.locator ? safeText(item.locator) : null })), unknowns: packet.unknowns.map(safeText), fields: packet.fields.map((field) => ({ id: field.id, key: safeText(field.key), label: safeText(field.label), classification: field.classification, provenance: field.provenance ? { source: field.provenance.source, locator: safeText(field.provenance.locator), reviewed: field.provenance.reviewed, sensitive: field.provenance.sensitive } : null })), createdAt: packet.createdAt, updatedAt: packet.updatedAt })),
+    applicationPackets: snapshot.applicationPackets.map((packet) => ({ id: packet.id, opportunityId: packet.opportunityId, status: packet.status, revision: packet.revision, audit: packet.audit ? { version: packet.audit.version, retrievedAt: packet.audit.retrievedAt, destinationUrl: publicUrl(packet.audit.destinationUrl), status: packet.audit.status } : null, guidance: { mode: packet.guidance.mode, reasons: [...packet.guidance.reasons], auditVersion: packet.guidance.auditVersion }, attachments: packet.attachments.map((item) => ({ name: safeText(item.name), status: item.status, locator: item.locator ? safeText(item.locator) : null })), unknowns: packet.unknowns.map(safeText), fields: packet.fields.map((field) => ({ id: field.id, key: safeText(field.key), label: safeText(field.label), classification: field.classification, provenance: field.provenance ? { source: field.provenance.source, locator: safeText(field.provenance.locator), reviewed: field.provenance.reviewed, sensitive: field.provenance.sensitive } : null })), createdAt: packet.createdAt, updatedAt: packet.updatedAt })),
     opportunities: snapshot.opportunities.map((item) => ({ id: item.id, kind: item.kind, company: safeText(item.company), title: safeText(item.title), location: safeText(item.location), canonicalApplyUrl: publicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? safeText(item.requisitionId) : null, eligibility: item.eligibility, evidenceStatus: item.evidenceStatus, sourceObservations: item.sourceObservations.map((observation) => ({ id: observation.id, sourceUrl: publicUrl(observation.sourceUrl), sourceType: observation.sourceType, status: observation.status, observedAt: observation.observedAt })), match: item.match ? { score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [safeText(key), value])), reasons: item.match.reasons.map(safeText), gaps: item.match.gaps.map(safeText), unknowns: item.match.unknowns.map(safeText) } : null, createdAt: item.createdAt, updatedAt: item.updatedAt })),
     trace: snapshot.trace.map((event) => ({ id: event.id, runId: event.runId, name: safeText(event.name), startedAt: event.startedAt, endedAt: event.endedAt, status: event.status, fields: publicTraceFields(event.attributes) }))
   };
@@ -119,7 +96,7 @@ function defaultBrowserOpen(url: string) {
 export function createViewerLauncher(options: ViewerOptions): ViewerLauncher {
   const staticDirectory = resolve(options.staticDirectory ?? fileURLToPath(new URL("../static", import.meta.url)));
   const tokens = new Map<string, { workspaceId: string; expiresAt: number }>();
-  const sessions = new Map<string, string>();
+  const sessions = new Map<string, { cookieSecret: string; workspaceId: string }>();
   let port = 0;
   let startPromise: Promise<void> | undefined;
   const server = createServer(async (request, response) => {
@@ -132,17 +109,19 @@ export function createViewerLauncher(options: ViewerOptions): ViewerLauncher {
         const grant = tokens.get(token);
         tokens.delete(token);
         if (!grant || grant.expiresAt < Date.now()) return json(response, 401, { error: "打开链接无效、已过期或已使用。" });
-        const session = randomBytes(32).toString("hex");
-        sessions.set(session, grant.workspaceId);
-        const sessionPath = `/s/${session}/`;
-        response.writeHead(303, { location: sessionPath, "set-cookie": `viewer_session=${session}; HttpOnly; SameSite=Strict; Path=${sessionPath}`, "cache-control": "no-store" });
+        const routeHandle = randomBytes(32).toString("hex");
+        const cookieSecret = randomBytes(32).toString("hex");
+        const sessionPath = `/s/${routeHandle}/`;
+        sessions.set(routeHandle, { cookieSecret, workspaceId: grant.workspaceId });
+        response.writeHead(303, { location: sessionPath, "set-cookie": `viewer_session=${cookieSecret}; HttpOnly; SameSite=Strict; Path=${sessionPath}`, "cache-control": "no-store" });
         return response.end();
       }
       const scoped = requestUrl.pathname.match(/^\/s\/([a-f0-9]{64})\/(.*)$/);
       const pathSession = scoped?.[1];
       const scopedPath = scoped?.[2] ?? requestUrl.pathname.replace(/^\/+/, "");
       const cookie = request.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith("viewer_session="))?.slice("viewer_session=".length);
-      const workspaceId = cookie && pathSession && cookie === pathSession ? sessions.get(cookie) : undefined;
+      const session = pathSession ? sessions.get(pathSession) : undefined;
+      const workspaceId = cookie && session && cookie === session.cookieSecret ? session.workspaceId : undefined;
       if (scopedPath.startsWith("api/")) {
         if (!workspaceId) return json(response, 401, { error: "Viewer 会话无效，请重新打开。" });
         if (request.method === "POST" && request.headers.origin !== `http://${expectedHost}`) return json(response, 403, { error: "跨来源修改请求已拒绝。" });

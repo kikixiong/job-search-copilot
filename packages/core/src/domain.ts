@@ -114,9 +114,38 @@ export function classifyApplicationField(key: string, label: string): Applicatio
   return "confirm";
 }
 
-const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
-const phonePattern = /(?:\+?\d[\d .()-]{7,}\d)/g;
-const bearerPattern = /\bBearer\s+[-A-Z0-9._~+/=]+/gi;
+const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const phonePattern = /(?:\+?\d[\d .()-]{7,}\d)/;
+const bearerPattern = /\bBearer\s+[-A-Z0-9._~+/=]+/i;
+const jwtPattern = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/i;
+const apiKeyPattern = /\b(?:sk|pk|api)[-_][A-Za-z0-9_-]{8,}\b/i;
+const namedSecretPattern = /\b(?:cookie|session|credential|authorization|access[_-]?token|api[_-]?key|secret|password)\b\s*[:=]\s*[^\s,;]+/i;
+const absolutePathPattern = /(?:^|[\s"'([{=:;,])(?:file:\/\/[^\s,;]+|\\\\[^\\\s]+\\[^\s,;]+|[A-Za-z]:[\\/][^\s,;]+|\/(?!\/)[^\s,;]+)/i;
+
+export function containsSensitivePublicText(value: string) {
+  return emailPattern.test(value) || phonePattern.test(value) || bearerPattern.test(value) || jwtPattern.test(value) || apiKeyPattern.test(value) || namedSecretPattern.test(value) || absolutePathPattern.test(value);
+}
+
+export function redactPublicText(value: string) {
+  return containsSensitivePublicText(value) ? "[REDACTED]" : value;
+}
+
+const sensitiveUrlKeyPattern = /(?:token|api[_-]?key|secret|signature|auth|credential|password|cookie|session)/i;
+const sensitiveUrlPathPattern = /(?:^|\/)(?:token|api[_-]?key|secret|credential|password|cookie|session|auth)(?:\/|:|=)[^/]+/i;
+
+export function redactPublicUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    const pathname = decodeURIComponent(url.pathname);
+    if (emailPattern.test(pathname) || phonePattern.test(pathname) || bearerPattern.test(pathname) || jwtPattern.test(pathname) || apiKeyPattern.test(pathname) || namedSecretPattern.test(pathname) || sensitiveUrlPathPattern.test(pathname)) return null;
+    for (const [key, parameter] of url.searchParams) if (sensitiveUrlKeyPattern.test(key) || containsSensitivePublicText(parameter)) return null;
+    if (url.hash && containsSensitivePublicText(decodeURIComponent(url.hash))) return null;
+    url.hash = "";
+    return url.toString();
+  } catch { return null; }
+}
 
 function isSensitiveTracePath(path: string) {
   const semanticPath = path.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -126,7 +155,7 @@ function isSensitiveTracePath(path: string) {
 export function redactTraceAttributes(value: unknown, key = "", parentPath = ""): unknown {
   const path = parentPath ? `${parentPath}.${key}` : key;
   if (isSensitiveTracePath(path)) return "[REDACTED]";
-  if (typeof value === "string") return value.replace(emailPattern, "[REDACTED]").replace(phonePattern, "[REDACTED]").replace(bearerPattern, "[REDACTED]");
+  if (typeof value === "string") return redactPublicText(value);
   if (Array.isArray(value)) return value.map((item) => redactTraceAttributes(item, "", path));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([nestedKey, nestedValue]) => [nestedKey, redactTraceAttributes(nestedValue, nestedKey, path)]));

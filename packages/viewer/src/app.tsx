@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { FeedbackDisposition, Opportunity, WorkspaceRecoverySnapshot } from "@kikixiong/job-search-copilot-core";
-import { applicationGuidanceMode } from "./policy.js";
+import type { FeedbackDisposition, PublicOpportunity, WorkspaceRecoverySnapshot } from "@kikixiong/job-search-copilot-core";
 
 type Area = "opportunities" | "profile" | "runs" | "application";
 type Snapshot = Omit<WorkspaceRecoverySnapshot, "trace"> & { trace: Array<{ id: string; runId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; fields: Record<string, string | number | boolean | null> }> };
@@ -21,23 +20,23 @@ function useEnvironment() {
   return { mobile, reduced };
 }
 
-function groupFor(opportunity: Opportunity) {
+function groupFor(opportunity: PublicOpportunity) {
   if (opportunity.evidenceStatus === "verified_open" && opportunity.eligibility === "eligible") return "worth";
   if (opportunity.evidenceStatus === "community_lead") return "lead";
   return "verify";
 }
 
-function EvidenceRail({ opportunity, reduced }: { opportunity: Opportunity; reduced: boolean }) {
+function EvidenceRail({ opportunity, reduced }: { opportunity: PublicOpportunity; reduced: boolean }) {
   const lead = opportunity.sourceObservations.find(({ sourceType }) => sourceType === "community");
   const officialObservations = opportunity.sourceObservations.filter(({ sourceType }) => sourceType === "official").sort((a, b) => a.observedAt.localeCompare(b.observedAt));
   const official = officialObservations.at(-1);
-  const checked = official?.observedAt ?? opportunity.updatedAt;
+  const evidenceTime = official?.observedAt ?? lead?.observedAt;
   return <aside className="evidence-panel" aria-label={`证据轨：${opportunity.title}`}>
     <p className="eyebrow">EVIDENCE CHAIN</p><h2>从线索到判断</h2>
     <ol className={`evidence-rail ${reduced ? "motion-off" : "motion-on"}`}>
       <li className={lead ? "node known" : "node unknown"}><span>社区线索</span><strong>{lead ? "已发现" : "未记录"}</strong></li>
-      <li className={official ? "node verified" : "node unknown"}><span>官方来源</span><strong>{official ? (official.status === "open" ? "招聘中" : official.status === "closed" ? "已关闭" : "待确认") : "尚未核验"}</strong></li>
-      <li className="node checked"><span>核验时间</span><strong>{new Date(checked).toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" })}</strong></li>
+      <li className={official ? "node verified" : "node unknown"}><span>官方来源</span><strong>{official ? (official.status === "open" ? "招聘中" : official.status === "closed" ? "已关闭" : "待确认") : "尚未官方核验"}</strong></li>
+      <li className={`node ${official ? "checked" : "unknown"}`}><span>{official ? "核验时间" : "线索发现时间"}</span><strong>{evidenceTime ? new Date(evidenceTime).toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" }) : "未记录"}</strong></li>
       <li className={`node decision ${opportunity.evidenceStatus}`}><span>当前判断</span><strong>{opportunity.evidenceStatus === "verified_open" ? "值得申请" : opportunity.evidenceStatus === "community_lead" ? "仅为线索" : "需要核实"}</strong></li>
     </ol>
     <section className="observation-log" aria-label="全部来源观察">
@@ -49,11 +48,11 @@ function EvidenceRail({ opportunity, reduced }: { opportunity: Opportunity; redu
       </article>)}
       {opportunity.evidenceStatus === "conflict" ? <p className="conflict-note">来源观察存在冲突；以最新官方观察作为核验时间，但保留全部历史观察。</p> : null}
     </section>
-    <dl className="rail-meta"><div><dt>资格</dt><dd>{opportunity.eligibility === "eligible" ? "符合" : opportunity.eligibility === "ineligible" ? "不符合" : "未知"}</dd></div><div><dt>最后核验</dt><dd>{checked.slice(0, 10)}</dd></div></dl>
+    <dl className="rail-meta"><div><dt>资格</dt><dd>{opportunity.eligibility === "eligible" ? "符合" : opportunity.eligibility === "ineligible" ? "不符合" : "未知"}</dd></div><div><dt>{official ? "最后核验" : "证据状态"}</dt><dd>{official ? official.observedAt.slice(0, 10) : "尚未官方核验"}</dd></div></dl>
   </aside>;
 }
 
-function Feedback({ opportunity }: { opportunity: Opportunity }) {
+function Feedback({ opportunity }: { opportunity: PublicOpportunity }) {
   const [selected, setSelected] = useState<FeedbackDisposition | null>(null);
   const [reason, setReason] = useState("");
   const [status, setStatus] = useState("");
@@ -103,9 +102,8 @@ function Application({ snapshot }: { snapshot: Snapshot }) {
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState("");
   const packet = snapshot.applicationPackets[0];
-  const opportunity = snapshot.opportunities.find(({ id }) => id === packet?.opportunityId);
   if (!packet) return <main className="single-panel zero-state" id="main-content"><p className="eyebrow">NEXT ACTION</p><h1>先选择机会并准备材料</h1><p>材料包由 Codex 生成；Viewer 只负责逐字段核对，不会提交申请。</p></main>;
-  const mode = applicationGuidanceMode(opportunity, packet);
+  const mode = packet.guidance.mode;
   async function copy(field: (typeof packet.fields)[number]) {
     const provenance = field.provenance;
     const guidance = `${field.label}\n来源：${provenance?.source ?? "未记录"}\n定位：${provenance?.locator ?? "未记录"}\n审核：${provenance?.reviewed ? "已审核" : "待审核"}\n请在目标页面核对后手动填写。`;

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -139,6 +139,28 @@ test("returns a redacted, versioned recovery snapshot through workspace_export w
     assert.match(emailField.id, /^[0-9a-f-]{36}$/i);
     const serialized = JSON.stringify(exported.snapshot);
     for (const secret of ["private@example.test", "Private Cover Letter"]) assert.equal(serialized.includes(secret), false);
+  });
+});
+
+test("workspace_export public recovery projection fails closed on paths, credentials, and secret URLs", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "Recovery /root/private/resume.pdf,backup=/secure/private/resume.pdf" });
+    const profile = await registry.invoke("profile_commit", { workspaceId: workspace.id, baseVersion: null, profile: { headline: "Bearer opaque-session-value", skills: ["SQL", "cookie=session-value", "/data/private/a"], positioningTracks: [{ name: "Analytics", summary: "/workspace/private/a", targetRoles: ["Analyst,/secure/private"] }] } });
+    const run = await registry.invoke("search_run_begin", { workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["credential=private-value"], locations: ["Remote"] }, preferenceVersion: null });
+    const batch = await registry.invoke("search_record_batch", { workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "Synthetic", title: "Analyst", location: "Remote", canonicalApplyUrl: "https://example.test/jobs/private@example.test?keep=public", eligibility: "eligible", evidence: { sourceUrl: "https://user:pass@example.test/jobs/1?keep=public", sourceType: "official", status: "open" }, match: { score: 80, factors: { skills: 90 }, reasons: ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature"], gaps: ["session=hidden"], unknowns: [] } }] });
+    await registry.invoke("feedback_record", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "interested", reason: "cookie=session-value" });
+    await registry.invoke("application_packet_upsert", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, status: "draft", fields: [{ key: "email", label: "Email", value: "private@example.test", provenance: { source: "profile", locator: "/root/profile/contact", reviewed: true, sensitive: false } }] });
+    const exported = await registry.invoke("workspace_export", { workspaceId: workspace.id, format: "json", includeContent: true });
+    const serialized = JSON.stringify(exported.snapshot);
+    const exportedFile = await readFile(exported.path, "utf8");
+    for (const forbidden of ["/root", "/secure", "/data", "/workspace", "opaque-session-value", "cookie=session-value", "credential=private-value", "private@example.test", "user:pass", "eyJhbGciOiJIUzI1NiJ9", "session=hidden"]) {
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+      assert.equal(exportedFile.includes(forbidden), false, `file:${forbidden}`);
+    }
+    assert.equal(exported.snapshot.opportunities[0].canonicalApplyUrl, null);
+    assert.equal(exported.snapshot.opportunities[0].sourceObservations[0].sourceUrl, null);
+    assert.ok(serialized.includes("Analytics"));
+    assert.deepEqual(TOOL_NAMES, expectedTools);
   });
 });
 

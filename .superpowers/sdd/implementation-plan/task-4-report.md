@@ -97,3 +97,43 @@ This was a high-risk service/schema/local-HTTP boundary. The implementation rece
 Repeated full tests and builds were skipped during individual TDD cycles; only affected core/MCP/Viewer tests ran until the final gate. No hash gate was used because normal source/static changes do not require a deterministic integrity contract. M-2 remains explicitly assigned to Task 5's clean-checkout release pipeline.
 
 Known residual risk is presentation/platform coverage: DOM/accessibility behavior, responsive state, reduced motion, and opener argument construction are automated, but no native screenshot pass or real Windows/Linux process launch was performed. Node 22 continues to emit its standard experimental warning for `node:sqlite`. No release, publish, remote, or external mutation action was performed.
+
+## Scoped re-review hardening — public recovery, ATS identity, and session credentials
+
+The scoped re-review of `651bb4f` found three remaining Important boundaries (I-3, I-4, M-1) and one Minor evidence-label issue (I-5). This second focused pass closes them without changing the 12-tool MCP surface or adding Task 5's release packaging mechanism.
+
+### One Core public recovery projection
+
+`JobSearchService` now owns one `WorkspaceRecoverySnapshot` public DTO and one projection from the private database-shaped recovery snapshot. Both `getWorkspaceSnapshot()` and JSON `workspace_export` use that projection; the Viewer consumes the same public result and may only narrow it further. JSON export content on disk is the same safe projection returned to MCP, so no internal raw snapshot is a public recovery response.
+
+The Core projection fails closed for email, phone, Bearer, JWT, API keys, named cookie/session/credential/authorization/token/secret/password values, file URLs, arbitrary absolute POSIX paths (including punctuation-delimited paths and `/root`, `/data`, `/workspace`), Windows drive paths, and UNC paths. Public URLs are omitted when they contain userinfo, sensitive/PII path components, sensitive query keys or values, or sensitive fragments. High-risk free text becomes the whole-value marker `[REDACTED]`; ordinary public text remains visible. Trace still has a fixed structural allowlist, with URL fields using the same public URL policy.
+
+### Raw ATS decision and evidence wording
+
+ATS safety is now calculated in Core while raw canonical, latest-official, and audit destination data is still available. The service verifies open/non-conflicting state, verified and current audit metadata, exact complete destination identity, reviewed ATS host, and reviewed non-sensitive provenance for every non-manual field. Only the irreversible `{ mode, reasons, auditVersion }` conclusion reaches the UI. The client-side URL policy was removed. Same-path destinations with different userinfo, token, API-key, or credential data therefore resolve to copy mode before any public URL is omitted.
+
+When there is no official observation, the evidence rail now says `尚未官方核验`, labels a community timestamp only as `线索发现时间`, and never uses opportunity `updatedAt` as a verified time. With official observations it continues to use the latest official timestamp and retains every observation/conflict in the log.
+
+### Independent route handle and cookie secret
+
+Token exchange now creates independent random 32-byte values: a route handle appears only in `/s/<handle>/`, while an unrelated cookie secret appears only in the `HttpOnly` cookie and server memory. The map is `handle -> { cookieSecret, workspaceId }`, and the cookie Path remains exactly the handle path. A caller who knows only the clean redirected URL cannot forge the cookie; parallel workspace paths remain isolated and crossed mutations remain 401.
+
+### Second-pass RED → GREEN evidence
+
+1. MCP recovery RED exposed `/root` and other secret containers through `workspace_export(includeContent:true)`. GREEN routes both recovery entry points and the JSON artifact through the Core public projection; the regression covers response and file content while preserving all 12 tools.
+2. Session RED showed `viewer_session=<route handle>` was accepted. GREEN requires the independent cookie secret; real cookie access succeeds and derived-cookie forgery fails 401.
+3. ATS HTTP RED had no server-side guidance conclusion. GREEN returns a raw-data-side copy decision for same-path secret-bearing destination differences and reviewed only for exactly matching safe raw destinations.
+4. Community-only UI RED did not contain `尚未官方核验`. GREEN separates discovery time from official verification semantics.
+5. A follow-up arbitrary-path RED exposed punctuation-delimited `Analyst,/secure/private`. GREEN expands the POSIX-path boundary and the MCP response/file regression passes.
+
+### Verification status for this second pass
+
+- TypeScript: `npx tsc -b packages/core packages/viewer --pretty false` passed.
+- Core: `npm run test:core` passed 23/23.
+- MCP: focused public-recovery regression passed, then `npm run test:mcp` passed 9/9 and retained exactly 12 tools.
+- Viewer HTTP/security: `npx tsx --test packages/viewer/test/server.test.ts` passed 10/10, including independent credentials, forged-cookie rejection, dual-workspace isolation, raw ATS mismatch, reviewed positive case, Host/Origin, feedback, review, and no-submit behavior.
+- Source gate: `git diff --check` passed; searches found no stale client policy reference or internal recovery call site outside the Core projection.
+
+The React DOM suite and the requested final `npm test`/`npm run build`/built HTTP smoke were not completed in this workspace state because iCloud had offloaded transitive `node_modules` files. Four sequential starts each blocked on a different dataless dependency: `jsdom/lib/jsdom/utils.js`, `entities/.../decode-data-html.js.map`, `react-dom/cjs/react-dom.development.js`, then `aria-query/.../codeRole.js`. The first three were restored from the existing local npm cache only; no network or package/source mutation occurred. Work stopped at the fourth dependency rather than repeatedly hydrating an incomplete install. Task 5's clean-checkout release pipeline (or the parent milestone's clean local install) must run the single final full test/build/HTTP-smoke gate. Previous successful full-gate evidence above belongs to `651bb4f` and is not claimed as fresh for this second-pass source state.
+
+Residual risk is therefore limited to the pending clean-install React/full-build execution gate plus the previously noted lack of native screenshot and real Windows/Linux launch passes. No dependency, lockfile, plugin manifest, configuration, release artifact, remote system, or external service was changed, so prior config/plugin/audit evidence remains reusable as directed.

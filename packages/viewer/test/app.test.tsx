@@ -29,7 +29,7 @@ const populatedSnapshot = {
     { id: "30000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", kind: "job", company: "合成科技", title: "Product Engineer", location: "Remote", canonicalApplyUrl: "https://boards.greenhouse.io/synthetic/jobs/1", requisitionId: "SYN-1", eligibility: "eligible", evidenceStatus: "verified_open", sourceObservations: [{ id: "o1", sourceUrl: "https://community.example/lead", sourceType: "community", status: "lead", observedAt: "2026-01-03T00:00:00.000Z" }, { id: "o2", sourceUrl: "https://boards.greenhouse.io/synthetic/jobs/1", sourceType: "official", status: "open", observedAt: "2026-01-03T00:01:00.000Z" }], match: { score: 91, factors: { 技能: 95, 地点: 100 }, reasons: ["技能高度匹配"], gaps: ["行业经验待补充"], unknowns: ["薪资范围未披露"] }, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:01:00.000Z" },
     { id: "40000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", kind: "job", company: "线索公司", title: "Frontend Engineer", location: "上海", canonicalApplyUrl: null, requisitionId: null, eligibility: "unknown", evidenceStatus: "community_lead", sourceObservations: [{ id: "o3", sourceUrl: "https://community.example/2", sourceType: "community", status: "lead", observedAt: "2026-01-03T00:00:00.000Z" }], match: null, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" }
   ],
-  applicationPackets: [{ id: "50000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", status: "draft", revision: 4, audit: { version: 3, retrievedAt: new Date().toISOString(), destinationUrl: "https://boards.greenhouse.io/synthetic/jobs/1", status: "verified" }, attachments: [{ name: "resume.pdf", status: "ready", locator: "packet.attachments.resume" }], unknowns: ["推荐人要求待核实"], fields: [{ id: "51000000-0000-4000-8000-000000000000", key: "email", label: "邮箱", classification: "safe", provenance: { source: "profile", locator: "profile.contact.email", reviewed: true, sensitive: false } }, { id: "52000000-0000-4000-8000-000000000000", key: "salary", label: "期望薪资", classification: "confirm", provenance: { source: "user_confirmed", locator: "conversation.salary", reviewed: true, sensitive: false } }, { id: "53000000-0000-4000-8000-000000000000", key: "signature", label: "签名", classification: "manual_only", provenance: { source: "unknown", locator: "live-form.signature", reviewed: false, sensitive: true } }], createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" }],
+  applicationPackets: [{ id: "50000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", status: "draft", revision: 4, audit: { version: 3, retrievedAt: new Date().toISOString(), destinationUrl: "https://boards.greenhouse.io/synthetic/jobs/1", status: "verified" }, guidance: { mode: "reviewed", reasons: [], auditVersion: 3 }, attachments: [{ name: "resume.pdf", status: "ready", locator: "packet.attachments.resume" }], unknowns: ["推荐人要求待核实"], fields: [{ id: "51000000-0000-4000-8000-000000000000", key: "email", label: "邮箱", classification: "safe", provenance: { source: "profile", locator: "profile.contact.email", reviewed: true, sensitive: false } }, { id: "52000000-0000-4000-8000-000000000000", key: "salary", label: "期望薪资", classification: "confirm", provenance: { source: "user_confirmed", locator: "conversation.salary", reviewed: true, sensitive: false } }, { id: "53000000-0000-4000-8000-000000000000", key: "signature", label: "签名", classification: "manual_only", provenance: { source: "unknown", locator: "live-form.signature", reviewed: false, sensitive: true } }], createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" }],
   trace: [{ id: "t1", runId: "20000000-0000-4000-8000-000000000000", name: "search.source.failed", startedAt: "2026-01-03T00:00:00.000Z", endedAt: null, status: "error", fields: { source: "Synthetic board", beforeScope: "前端", afterScope: "产品工程" } }]
 } as any;
 
@@ -79,7 +79,7 @@ test("supports mobile/reduced-motion state, named keyboard controls, and click-o
   await waitFor(() => assert.ok(screen.getByRole("status").textContent?.includes("复制失败")));
 });
 
-test("allows reviewed guidance only for exact HTTPS ATS hosts and fails closed for lookalikes", () => {
+test("renders only the server-side ATS guidance decision, not a client URL decision", () => {
   const allowed = structuredClone(populatedSnapshot);
   render(<ViewerApp initialSnapshot={allowed} />);
   fireEvent.click(screen.getByRole("button", { name: "申请准备" }));
@@ -88,22 +88,16 @@ test("allows reviewed guidance only for exact HTTPS ATS hosts and fails closed f
 
   const lookalike = structuredClone(populatedSnapshot);
   lookalike.opportunities[0].canonicalApplyUrl = "https://boards.greenhouse.io.evil.example/jobs/1";
+  lookalike.applicationPackets[0].guidance = { mode: "copy", reasons: ["ats_not_reviewed"], auditVersion: 3 };
   render(<ViewerApp initialSnapshot={lookalike} />);
   fireEvent.click(screen.getByRole("button", { name: "申请准备" }));
   assert.ok(screen.getByText("复制模式"));
 });
 
-test("fails ATS guidance closed without a fresh matching audit, open official evidence, and reviewed nonsensitive fields", () => {
-  for (const mutate of [
-    (snapshot: any) => { snapshot.applicationPackets[0].audit = null; },
-    (snapshot: any) => { snapshot.applicationPackets[0].audit.retrievedAt = "2020-01-01T00:00:00.000Z"; },
-    (snapshot: any) => { snapshot.applicationPackets[0].audit.destinationUrl = "https://boards.greenhouse.io/synthetic/jobs/2"; },
-    (snapshot: any) => { snapshot.opportunities[0].sourceObservations[1].sourceUrl = "https://boards.greenhouse.io/synthetic/jobs/2"; },
-    (snapshot: any) => { snapshot.opportunities[0].evidenceStatus = "closed"; snapshot.opportunities[0].sourceObservations[1].status = "closed"; },
-    (snapshot: any) => { snapshot.applicationPackets[0].fields[0].provenance.sensitive = true; }
-  ]) {
+test("renders every fail-closed ATS reason as copy mode", () => {
+  for (const reason of ["audit_not_verified", "audit_not_current", "destination_mismatch", "official_observation_not_open", "field_provenance_not_reviewed"]) {
     const snapshot = structuredClone(populatedSnapshot);
-    mutate(snapshot);
+    snapshot.applicationPackets[0].guidance = { mode: "copy", reasons: [reason], auditVersion: 3 };
     render(<ViewerApp initialSnapshot={snapshot} />);
     fireEvent.click(screen.getByRole("button", { name: "申请准备" }));
     assert.ok(screen.getByText("复制模式"));
@@ -145,6 +139,16 @@ test("uses latest official evidence, lists every observation, and associates fai
   assert.ok(screen.getByText(/冲突/));
   fireEvent.click(screen.getByRole("button", { name: "搜索记录" }));
   assert.equal(screen.getAllByText("Run two source").length, 1);
+});
+
+test("labels community discovery separately and never presents updatedAt as official verification", () => {
+  render(<ViewerApp initialSnapshot={populatedSnapshot} />);
+  fireEvent.click(screen.getByRole("button", { name: /Frontend Engineer/ }));
+  const rail = screen.getByLabelText("证据轨：Frontend Engineer");
+  assert.ok(rail.textContent?.includes("尚未官方核验"));
+  assert.ok(rail.textContent?.includes("线索发现时间"));
+  assert.equal(rail.textContent?.includes("最后核验"), false);
+  assert.equal(rail.textContent?.includes("核验时间"), false);
 });
 
 test("activates navigation from keyboard Enter and Space", () => {
