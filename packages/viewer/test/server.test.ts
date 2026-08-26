@@ -13,8 +13,8 @@ async function fixture(tokenTtlMs?: number, exactDestinations = false) {
   const staticDirectory = await mkdtemp(join(tmpdir(), "viewer-static-"));
   await writeFile(join(staticDirectory, "index.html"), "<!doctype html><main>求职证据台</main>");
   const service = new JobSearchService({ dataRoot });
-  const workspace = await service.openWorkspace({ name: "Synthetic Viewer private@example.test /Volumes/private/a /root/private/a" });
-  const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Product Engineer +1 415-555-2671 /mnt/private/a Bearer opaque-session", skills: ["TypeScript", "sk-live-secret", "C:\\private\\c", "/data/private/a"], positioningTracks: [{ name: "Product", summary: "/srv/private/a /workspace/private/a", targetRoles: ["Engineer"] }] } });
+  const workspace = await service.openWorkspace({ name: "Synthetic Viewer private@example.test /Volumes/private/a 路径：/root/private/a" });
+  const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Product Engineer +1 415-555-2671 /mnt/private/a Bearer opaque-session", skills: ["TypeScript", "sk-live-secret", "C:\\private\\c", "/data/private/a"], positioningTracks: [{ name: "Product", summary: "/srv/private/a /workspace/private/a", targetRoles: ["Engineer", "参见/root/private/resume.pdf"] }] } });
   const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["product engineer"], locations: ["Remote"] }, preferenceVersion: null });
   const exactDestination = "https://boards.greenhouse.io/synthetic/jobs/1";
   const batch = await service.recordSearchBatch({
@@ -111,7 +111,7 @@ test("serves a workspace-scoped redacted snapshot without values, secrets, token
     assert.equal(snapshot.workspace.id, workspace.id);
     assert.equal(snapshot.applicationPackets[0].fields.find((field: any) => field.key === "email").value, undefined);
     const serialized = JSON.stringify(snapshot);
-    for (const forbidden of ["private@example.test", "candidate@example.test", "415-555-2671", "sk-live-secret", "eyJhbGciOiJIUzI1NiJ9", "user:pass", "query-secret", "audit-secret", "/Volumes", "/mnt", "/srv", "/root", "/data", "/workspace", "Bearer opaque", "cookie=session", "C:\\\\private", "\\\\server", "file:///", "viewer-data-", "storedPath", "extractedText"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+    for (const forbidden of ["private@example.test", "candidate@example.test", "415-555-2671", "sk-live-secret", "eyJhbGciOiJIUzI1NiJ9", "user:pass", "query-secret", "audit-secret", "/Volumes", "/mnt", "/srv", "路径：/root", "参见/root", "/root", "/data", "/workspace", "Bearer opaque", "cookie=session", "C:\\\\private", "\\\\server", "file:///", "viewer-data-", "storedPath", "extractedText"]) assert.equal(serialized.includes(forbidden), false, forbidden);
     assert.deepEqual(Object.keys(snapshot.trace[0]).sort(), ["endedAt", "fields", "id", "name", "runId", "startedAt", "status"].sort());
   } finally { await launcher.close(); service.close(); }
 });

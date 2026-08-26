@@ -6,7 +6,7 @@ import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
-import { JobSearchService } from "../src/index.js";
+import { JobSearchService, redactPublicText } from "../src/index.js";
 import { inspectResume, storeResumeCopy } from "../src/resume.js";
 
 async function withService(run: (service: JobSearchService, root: string) => Promise<void>) {
@@ -23,6 +23,23 @@ function isInside(parent: string, child: string) {
   const candidate = relative(resolve(parent), resolve(child));
   return candidate !== ".." && !candidate.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
 }
+
+test("redacts POSIX paths after Unicode punctuation or adjacent text without treating a protocol separator as a path", () => {
+  assert.equal(redactPublicText("路径：/root/private/resume.pdf"), "[REDACTED]");
+  assert.equal(redactPublicText("参见/root/private/resume.pdf"), "[REDACTED]");
+  assert.equal(redactPublicText("参见https://example.test"), "参见https://example.test");
+});
+
+test("getWorkspaceSnapshot never returns POSIX paths embedded in Chinese free text", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "候选人路径：/root/private/resume.pdf" });
+    await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "参见/root/private/resume.pdf", skills: [], positioningTracks: [] } });
+    const serialized = JSON.stringify(await service.getWorkspaceSnapshot({ workspaceId: workspace.id }));
+    assert.equal(serialized.includes("/root/private/resume.pdf"), false);
+    assert.equal(serialized.includes("候选人路径："), false);
+    assert.equal(serialized.includes("参见/root"), false);
+  });
+});
 
 function crc32(input: Buffer) {
   let crc = 0xffffffff;

@@ -137,3 +137,18 @@ Token exchange now creates independent random 32-byte values: a route handle app
 The React DOM suite and the requested final `npm test`/`npm run build`/built HTTP smoke were not completed in this workspace state because iCloud had offloaded transitive `node_modules` files. Four sequential starts each blocked on a different dataless dependency: `jsdom/lib/jsdom/utils.js`, `entities/.../decode-data-html.js.map`, `react-dom/cjs/react-dom.development.js`, then `aria-query/.../codeRole.js`. The first three were restored from the existing local npm cache only; no network or package/source mutation occurred. Work stopped at the fourth dependency rather than repeatedly hydrating an incomplete install. Task 5's clean-checkout release pipeline (or the parent milestone's clean local install) must run the single final full test/build/HTTP-smoke gate. Previous successful full-gate evidence above belongs to `651bb4f` and is not claimed as fresh for this second-pass source state.
 
 Residual risk is therefore limited to the pending clean-install React/full-build execution gate plus the previously noted lack of native screenshot and real Windows/Linux launch passes. No dependency, lockfile, plugin manifest, configuration, release artifact, remote system, or external service was changed, so prior config/plugin/audit evidence remains reusable as directed.
+
+## Final I-3 closure — Unicode-adjacent POSIX paths
+
+The final scoped re-review found that the POSIX detector still depended on a finite ASCII prefix list. Chinese text such as `路径：/root/private/resume.pdf` and `参见/root/private/resume.pdf` could therefore cross the shared Core recovery projection unchanged.
+
+The detector now treats any single-slash path candidate as high-risk regardless of the preceding Unicode or text character. Negative lookaround explicitly excludes the `://`/`//` separators themselves; free-text URLs that contain a later path may conservatively redact, while the dedicated public-URL projection continues to handle URL identity separately. File URL, UNC, and Windows drive rules remain distinct, and the drive rule rejects doubled slashes so `https://example.test` is not mistaken for a drive path.
+
+Observed TDD evidence:
+
+- RED: the direct helper returned both Chinese examples unchanged; the real `getWorkspaceSnapshot()` contained `/root/private/resume.pdf`; MCP export response/file and Viewer HTTP snapshot both contained `参见/root`.
+- Intermediate RED: the first Unicode-aware implementation exposed that the Windows drive expression classified `https://` as `s:/`; the helper regression caught it before completion.
+- GREEN: direct helper plus real snapshot 2/2; TypeScript build; Core 25/25; MCP 9/9 with exactly 12 tools and response/file checks; Viewer HTTP/security 10/10.
+- `git diff --check` passed. No React, root full test/build, or built-output smoke was repeated; those remain consolidated in Task 5's clean-install gate as previously recorded.
+
+This pass changes no route, DTO, schema, dependency, configuration, plugin, release artifact, or public tool contract. The I-3 public recovery privacy bypass is covered at the helper, Core service, MCP response/artifact, and Viewer HTTP boundaries.

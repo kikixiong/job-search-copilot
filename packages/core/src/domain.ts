@@ -120,10 +120,13 @@ const bearerPattern = /\bBearer\s+[-A-Z0-9._~+/=]+/i;
 const jwtPattern = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/i;
 const apiKeyPattern = /\b(?:sk|pk|api)[-_][A-Za-z0-9_-]{8,}\b/i;
 const namedSecretPattern = /\b(?:cookie|session|credential|authorization|access[_-]?token|api[_-]?key|secret|password)\b\s*[:=]\s*[^\s,;]+/i;
-const absolutePathPattern = /(?:^|[\s"'([{=:;,])(?:file:\/\/[^\s,;]+|\\\\[^\\\s]+\\[^\s,;]+|[A-Za-z]:[\\/][^\s,;]+|\/(?!\/)[^\s,;]+)/i;
+const fileUrlPattern = /file:\/\/[^\s,;]+/i;
+const uncPathPattern = /\\\\[^\\\s]+\\[^\s,;]+/;
+const windowsDrivePathPattern = /[A-Za-z]:[\\/](?![\\/])[^\s,;]+/;
+const posixAbsolutePathPattern = /(?<![:/])\/(?!\/)[^\s,;]+/u;
 
 export function containsSensitivePublicText(value: string) {
-  return emailPattern.test(value) || phonePattern.test(value) || bearerPattern.test(value) || jwtPattern.test(value) || apiKeyPattern.test(value) || namedSecretPattern.test(value) || absolutePathPattern.test(value);
+  return emailPattern.test(value) || phonePattern.test(value) || bearerPattern.test(value) || jwtPattern.test(value) || apiKeyPattern.test(value) || namedSecretPattern.test(value) || fileUrlPattern.test(value) || uncPathPattern.test(value) || windowsDrivePathPattern.test(value) || posixAbsolutePathPattern.test(value);
 }
 
 export function redactPublicText(value: string) {
