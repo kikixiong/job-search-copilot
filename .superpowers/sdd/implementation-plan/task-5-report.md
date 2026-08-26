@@ -101,3 +101,29 @@ b4b6a3682203664593a058a289ca14837ee73ea9df946b503d9d5544ce9dc0c9  NOTICE
 No subagent or independent implementation reviewer was started because the task explicitly prohibited subagents; the controller owns the independent re-review. Official plugin/skill validation from the same final metadata state was reused after a DOCX-only `Error.cause` fix because that source edit cannot affect plugin metadata or skills. The affected file lint and Core suite were rerun, followed by one final lint/full-test/typecheck/build/audit/scanner gate. Package inputs were generated only for the required final double comparison, and schema/hash/smoke checks ran only on the retained second artifact.
 
 Known residual risks: Linux CI is pinned to Node 22.13.0 but was not executed remotely in this local-only task; Windows remains path-compatible without an end-to-end release smoke; the direct DOCX extractor intentionally covers visible main-document WordprocessingML and does not extract headers, footers, footnotes or embedded non-text objects; Node may print the standard experimental `node:sqlite` warning; npm audit represents registry state at execution time. The repository remains unpushed and unpublished, and public release still requires separate human approval.
+
+## Final-review closure addendum — input provenance, archive limits, pins, and retained artifact
+
+The final repository review strengthens the release boundary further:
+
+- The release build validates esbuild metafile inputs and actual Vite/Rollup module, facade, and original-file IDs. Every repository-local input must resolve to a git-tracked file; only exact virtual IDs and exact `node_modules` path components are exempt. Workspace Core and Viewer imports are bundled directly from tracked `src/index.ts` entry points, never untracked generated `dist`. Relative Vite IDs resolve from the Viewer build root while containment remains anchored to the repository. Controlled tests prove an untracked transitive Viewer import is rejected.
+- Release containment uses a shared `path.relative` helper, with `path.win32` drive and sibling-prefix regressions.
+- DOCX ZIP central-directory metadata is checked before expansion: entry count, per-entry uncompressed size, aggregate uncompressed size, and relationship size are bounded, then actual expanded byte lengths are checked again. A highly compressible oversized-entry regression is rejected before extraction.
+- CI action references are full commit SHAs with reviewed `# v4` comments. Read-only official-tag verification confirmed `actions/checkout@v4` as `11d5960a326750d5838078e36cf38b85af677262` and `actions/setup-node@v4` as `49933ea5288caeca8642d1e84afbd3f7d6820020`; configuration validation rejects tags or malformed pins.
+- The isolated retained-package smoke now imports PDF, DOCX, TXT, and Markdown in addition to proving exactly 12 MCP tools, Viewer authentication, and both static assets.
+
+Two release attempts correctly failed before a successful artifact existed: first on untracked generated workspace `dist` inputs, then on a relative Vite `index.html` ID. Both causes were fixed without weakening the provenance gate and covered by focused tests. After inputs stabilized, exactly two successful generations were performed. All five hashes matched; the retained package is 779,786 bytes:
+
+```text
+929e9405f929358bc915ba8116035f586859eb9880032fb632067007b0cbea35  job-search-copilot-0.1.0.tgz
+c0d552bc67711add65a3d0de64a257311a0502d575c555cce88dbbd87f3105ad  job-search-copilot-0.1.0.cdx.json
+0323c3c506cf5ddbca2dbf17d8c824b9ff23253b0554b87c365773e84a71eb4f  job-search-copilot-0.1.0-licenses.md
+b4b6a3682203664593a058a289ca14837ee73ea9df946b503d9d5544ce9dc0c9  NOTICE
+b4e7ade18b42fca607ec7e936bb4b812598faa2c545ffb4dcd2fa3be8852d9b1  SHA256SUMS file itself
+```
+
+`shasum -a 256 -c SHA256SUMS` passed. The official CycloneDX library validated version 1.6 with 109 components; generated license material has 110 Markdown sections; package construction's compatibility and placeholder gates passed. The archive contains 31 entries under the single `job-search-copilot/` root and no `node_modules`, `.git`, private sentinel, Mammoth/dingbat, or native binding entry.
+
+Fresh final evidence after the last release-script change: local validators plus `npm test` 97/97, lint, tracked sensitive scan, deterministic double package, SBOM validation, checksums, and isolated package smoke all passed. Existing TypeScript/build/audit evidence was reused because no TypeScript production source, Viewer input, dependency, or lockfile changed afterward. `npm ci` was intentionally skipped because this final-review change set did not modify dependencies or the lockfile.
+
+Residual platform and format limits remain unchanged: no remote Linux CI or Windows end-to-end smoke was run; Windows path compatibility is unit-tested; DOCX extraction is limited to visible main-document WordprocessingML; Node 22 may print its experimental SQLite warning; audit evidence is point-in-time. No remote, push, publish, plugin install, or live application action was performed.

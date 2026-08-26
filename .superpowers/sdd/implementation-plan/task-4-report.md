@@ -164,3 +164,19 @@ TDD evidence on this exact boundary:
 - Current affected gates: TypeScript passed; Core 25/25; MCP 9/9 with exactly 12 tools; Viewer HTTP/security 10/10; `git diff --check` passed.
 
 No React/full/build/built-smoke repetition was added; Task 5 retains the clean-install final gate. No public API, route, schema, dependency, configuration, plugin, or release artifact changed.
+
+## Final-review closure addendum — targeting, run provenance, manual safety, and packet freshness
+
+The repository-wide final review adds the following Task 4-facing closures without changing the twelve-tool MCP surface or the no-submit boundary:
+
+- One versioned, strict `TargetingConstraints` contract is shared by Profile positioning facts and each Search Brief's immutable run snapshot. It covers job/internship kind, employment type, level, domains, availability, work authorization/visa, timing, hard exclusions, breadth, and explicit confirmed/unknown/contradiction/unknowns semantics. Legacy rows migrate to safe unknown defaults; a restart regression proves a confirmed internship target survives recovery and is reused without inference.
+- Search recording persists structured query outcomes, public failure code/summary, exact locator/tier/time, observation confidence/deadline/conflict metadata, auditable dedupe decisions, and `runId` on every run-bound fact. Recovery, MCP queries, and the Viewer expose the same redacted exact-run provenance. A vertical MCP/real-Viewer regression covers official timeout/blocked outcomes, a social lead, official evidence, merge, recovery, and Viewer rendering.
+- Database triggers plus transactional service checks make `running -> completed|failed` the only terminal transition and reject every batch, finish, or trace mutation after closure. Concurrent completion has one winner, and optional `opportunities_query.runId` derives assessment status only from that run's observations so later runs cannot contaminate old scope.
+- The manual-only classifier now fails closed across normalized Chinese and English consent, terms, attestation, signature/e-signature, final-submit, and generic submit/apply controls. Non-empty values are rejected by both service and MCP; schema migration 8 clears historical values again.
+- Trace redaction drops password, secret, credential, API-key, private-key, and session subtrees before persistence. CSV export neutralizes formula prefixes after leading whitespace/control bytes while JSON and Markdown retain their normal text behavior.
+- Application packets have an explicit current/newest selector. A successful review response replaces local state and resets acknowledgement state, preventing a stale second click.
+- Desktop browser opening waits for `spawn` or `error`, calls `unref()` only after a successful spawn, and returns a structured unavailable MCP result for a missing opener instead of producing an uncaught process error.
+
+Schema version 7 introduced the targeting/provenance/run-invariant storage and safe backfills; version 8 reapplies the historical manual-value cleanup. Both migrations retain backward-compatible defaults while strict current input schemas reject unknown properties.
+
+Final-review evidence on the delivered source state includes `npm test` at 97/97, exact twelve-tool assertions, lint, TypeScript, production build, tracked sensitive scanning, and the release's extracted Viewer/MCP smoke. The final package smoke additionally exercises PDF, DOCX, TXT, and Markdown imports. The complete artifact and supply-chain evidence is recorded in the Task 5 addendum and `final-fix-report.md` scratch report. No subagent was used, no remote was changed, and no publish or live application action occurred.
