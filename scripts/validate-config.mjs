@@ -48,6 +48,10 @@ async function validate() {
 
   const mcp = await readJson(".mcp.json");
   requireValue(mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers), "MCP manifest must define an mcpServers object.");
+  const jobSearchServer = mcp.mcpServers["job-search-copilot"];
+  requireValue(jobSearchServer?.command === "node", "Job Search Copilot MCP command must use Node.");
+  requireValue(jobSearchServer?.cwd === ".", "Job Search Copilot MCP cwd must be relative to the plugin root.");
+  requireValue(Array.isArray(jobSearchServer?.args) && jobSearchServer.args.length === 1 && jobSearchServer.args[0] === "packages/mcp/dist/index.js", "Job Search Copilot MCP entry point is invalid.");
   requireValue((await stat(resolve(root, "skills"))).isDirectory(), "Skills directory is missing.");
 
   const fixtureFiles = await jsonFiles("fixtures");

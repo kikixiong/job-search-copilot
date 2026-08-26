@@ -1,0 +1,38 @@
+export { JobSearchService } from "./service.js";
+export type {
+  ApplicationField,
+  ApplicationPacket,
+  CandidateProfileVersion,
+  ImportedResume,
+  JobSearchServiceOptions,
+  MatchAssessment,
+  Opportunity,
+  SearchRun,
+  SourceObservation,
+  TraceEvent,
+  Workspace
+} from "./service.js";
+export {
+  applicationFieldClassificationSchema,
+  eligibilitySchema,
+  evidenceStatusSchema,
+  feedbackDispositionSchema,
+  matchInputSchema,
+  opportunityInputSchema,
+  opportunityKindSchema,
+  preferenceSnapshotDataSchema,
+  profileDataSchema,
+  searchBriefDataSchema,
+  sourceObservationInputSchema
+} from "./domain.js";
+export type {
+  ApplicationFieldClassification,
+  Eligibility,
+  EvidenceStatus,
+  FeedbackDisposition,
+  OpportunityInput,
+  PreferenceSnapshotData,
+  ProfileData,
+  SearchBriefData
+} from "./domain.js";
+export { defaultDataRoot } from "./storage.js";

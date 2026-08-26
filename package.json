@@ -19,11 +19,15 @@
   "scripts": {
     "build": "npm run validate:config && tsc -b --pretty false",
     "clean": "tsc -b --clean",
-    "test": "npm run validate:config",
+    "test": "npm run validate:config && tsx --test packages/*/test/**/*.test.ts",
+    "test:core": "tsx --test packages/core/test/**/*.test.ts",
+    "test:mcp": "tsc -b packages/core --pretty false && tsx --test packages/mcp/test/**/*.test.ts",
     "typecheck": "tsc -b --pretty false",
     "validate:config": "node scripts/validate-config.mjs"
   },
   "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.3"
   }
 }
