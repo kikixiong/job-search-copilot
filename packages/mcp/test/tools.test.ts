@@ -81,6 +81,64 @@ test("runs a representative workspace-profile-search-opportunity vertical path t
   });
 });
 
+test("returns a redacted, versioned recovery snapshot through workspace_export without adding tools", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "Snapshot MCP" });
+    const profile = await registry.invoke("profile_commit", {
+      workspaceId: workspace.id,
+      baseVersion: null,
+      profile: { headline: "Synthetic Analyst", skills: ["SQL"], positioningTracks: [{ name: "Analytics", summary: "Evidence", targetRoles: ["Analyst"] }] }
+    });
+    const firstRun = await registry.invoke("search_run_begin", {
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["analyst"], locations: ["Remote"] },
+      preferenceVersion: null
+    });
+    const batch = await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: firstRun.id,
+      query: { text: "synthetic analyst", source: "test" },
+      opportunities: [{ kind: "job", company: "Synthetic Co", title: "Analyst", location: "Remote", eligibility: "eligible", evidence: { sourceUrl: "https://example.test/job", sourceType: "official", status: "open" } }]
+    });
+    const feedback = await registry.invoke("feedback_record", {
+      workspaceId: workspace.id,
+      opportunityId: batch.opportunities[0].id,
+      disposition: "interested",
+      confirmedPreferenceSnapshot: { preferredLocations: ["Remote"], preferredRoles: ["Analyst"], notes: "Synthetic preference" },
+      preferenceBaseVersion: null
+    });
+    const secondRun = await registry.invoke("search_run_begin", {
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["product analyst"], locations: ["Remote"] },
+      preferenceVersion: feedback.preferenceVersion
+    });
+    await registry.invoke("search_run_finish", { workspaceId: workspace.id, runId: secondRun.id });
+    const packet = await registry.invoke("application_packet_upsert", {
+      workspaceId: workspace.id,
+      opportunityId: batch.opportunities[0].id,
+      status: "draft",
+      fields: [{ key: "email", label: "Email", value: "private@example.test" }, { key: "cover_letter", label: "Cover letter", value: "Private Cover Letter" }]
+    });
+    await registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id });
+
+    const exported = await registry.invoke("workspace_export", { workspaceId: workspace.id, format: "json", includeContent: true });
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+    assert.equal(exported.snapshot.workspace.id, workspace.id);
+    assert.equal(exported.snapshot.latestProfile.positioningTracks[0].name, "Analytics");
+    assert.equal(exported.snapshot.latestSearchBrief.version, 2);
+    assert.equal(exported.snapshot.latestPreference.version, 1);
+    assert.equal(exported.snapshot.runs.length, 2);
+    assert.equal(exported.snapshot.runs.find((run: { id: string }) => run.id === firstRun.id).summary.opportunityCount, 1);
+    assert.equal(exported.snapshot.feedback[0].reason, null);
+    assert.equal(exported.snapshot.applicationPackets[0].status, "ready_for_prefill");
+    assert.deepEqual(exported.snapshot.applicationPackets[0].fields.find((field: { key: string }) => field.key === "email"), { key: "email", label: "Email", classification: "safe" });
+    const serialized = JSON.stringify(exported.snapshot);
+    for (const secret of ["private@example.test", "Private Cover Letter"]) assert.equal(serialized.includes(secret), false);
+  });
+});
+
 test("viewer_open reports unavailable without Task 4 and refuses non-loopback launch URLs", async () => {
   const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-viewer-"));
   const service = new JobSearchService({ dataRoot });

@@ -36,6 +36,16 @@ export interface Opportunity { id: string; workspaceId: string; kind: "job" | "i
 export interface ApplicationField { id: string; key: string; label: string; value: string; classification: ApplicationFieldClassification }
 export interface ApplicationPacket { id: string; workspaceId: string; opportunityId: string | null; status: "draft" | "reviewed" | "ready_for_prefill"; fields: ApplicationField[]; createdAt: string; updatedAt: string }
 export interface TraceEvent { id: string; workspaceId: string; traceId: string; spanId: string; parentSpanId: string | null; name: string; startedAt: string; endedAt: string | null; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }
+export interface WorkspaceRecoverySnapshot {
+  workspace: { id: string; name: string; createdAt: string };
+  latestProfile: { version: number; headline: string; skills: string[]; positioningTracks: Array<{ name: string; summary: string; targetRoles: string[] }>; createdAt: string } | null;
+  latestSearchBrief: { version: number; data: SearchBriefData; createdAt: string } | null;
+  latestPreference: { version: number; data: Pick<PreferenceSnapshotData, "preferredLocations" | "preferredRoles">; createdAt: string } | null;
+  runs: Array<SearchRun & { summary: { queryCount: number; opportunityCount: number } }>;
+  feedback: Array<{ id: string; opportunityId: string; disposition: FeedbackDisposition; preferenceVersion: number | null; reason: null; createdAt: string }>;
+  applicationPackets: Array<{ id: string; opportunityId: string | null; status: ApplicationPacket["status"]; fields: Array<Pick<ApplicationField, "key" | "label" | "classification">>; createdAt: string; updatedAt: string }>;
+  opportunities: Array<Pick<Opportunity, "id" | "kind" | "company" | "title" | "location" | "canonicalApplyUrl" | "eligibility" | "evidenceStatus" | "updatedAt">>;
+}
 
 type WorkspaceRow = { id: string; name: string; created_at: string };
 type ResumeRow = { id: string; workspace_id: string; original_name: string; stored_path: string; sha256: string; extracted_text: string; created_at: string };
@@ -226,8 +236,9 @@ export class JobSearchService {
     return rows.map((row) => this.traceFromRow(row));
   }
 
-  async exportWorkspace(input: { workspaceId: string; format: "json" | "markdown" | "csv" }) {
+  async exportWorkspace(input: { workspaceId: string; format: "json" | "markdown" | "csv"; includeContent?: boolean }) {
     const workspace = await this.requireWorkspace(input.workspaceId);
+    if (input.includeContent && input.format !== "json") throw new Error("Structured content is available only for JSON exports.");
     const opportunities = await this.queryOpportunities({ workspaceId: input.workspaceId });
     const profiles = this.database.prepare("SELECT version, headline, skills_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version").all(input.workspaceId);
     const runs = this.database.prepare("SELECT id, profile_version, search_brief_version, preference_version, status, started_at, finished_at FROM search_runs WHERE workspace_id = ? ORDER BY started_at").all(input.workspaceId);
@@ -245,7 +256,54 @@ export class JobSearchService {
     }
     const path = resolveInside(workspace.exportDirectory, `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}.${extension}`);
     await writeGeneratedFile(this.dataRoot, path, contents);
-    return { format: input.format, path };
+    if (!input.includeContent) return { format: input.format, path };
+    return { format: input.format, path, snapshot: this.recoverySnapshot(workspace) };
+  }
+
+  private recoverySnapshot(workspace: Workspace): WorkspaceRecoverySnapshot {
+    const latestProfile = this.database.prepare("SELECT id, version, headline, skills_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { id: string; version: number; headline: string; skills_json: string; created_at: string } | undefined;
+    const latestSearchBrief = this.database.prepare("SELECT version, data_json, created_at FROM search_brief_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
+    const latestPreference = this.database.prepare("SELECT version, data_json, created_at FROM preference_snapshot_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
+    const runs = this.database.prepare("SELECT * FROM search_runs WHERE workspace_id = ? ORDER BY started_at, id").all(workspace.id) as SearchRunRow[];
+    const feedback = this.database.prepare("SELECT id, opportunity_id, disposition, preference_version, created_at FROM feedback WHERE workspace_id = ? ORDER BY created_at, id").all(workspace.id) as Array<{ id: string; opportunity_id: string; disposition: FeedbackDisposition; preference_version: number | null; created_at: string }>;
+    const packets = this.database.prepare("SELECT * FROM application_packets WHERE workspace_id = ? ORDER BY updated_at, id").all(workspace.id) as PacketRow[];
+    const opportunities = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? ORDER BY updated_at DESC, id").all(workspace.id) as OpportunityRow[];
+
+    return {
+      workspace: { id: workspace.id, name: workspace.name, createdAt: workspace.createdAt },
+      latestProfile: latestProfile ? {
+        version: latestProfile.version,
+        headline: latestProfile.headline,
+        skills: parseJson<string[]>(latestProfile.skills_json),
+        positioningTracks: (this.database.prepare("SELECT name, summary, target_roles_json FROM positioning_tracks WHERE workspace_id = ? AND profile_version_id = ? ORDER BY id").all(workspace.id, latestProfile.id) as Array<{ name: string; summary: string; target_roles_json: string }>).map((track) => ({ name: track.name, summary: track.summary, targetRoles: parseJson<string[]>(track.target_roles_json) })),
+        createdAt: latestProfile.created_at
+      } : null,
+      latestSearchBrief: latestSearchBrief ? { version: latestSearchBrief.version, data: parseJson<SearchBriefData>(latestSearchBrief.data_json), createdAt: latestSearchBrief.created_at } : null,
+      latestPreference: latestPreference ? (() => {
+        const preference = parseJson<PreferenceSnapshotData>(latestPreference.data_json);
+        return { version: latestPreference.version, data: { preferredLocations: preference.preferredLocations, preferredRoles: preference.preferredRoles }, createdAt: latestPreference.created_at };
+      })() : null,
+      runs: runs.map((run) => ({
+        ...this.searchRunFromRow(run),
+        summary: {
+          queryCount: (this.database.prepare("SELECT COUNT(*) AS count FROM query_events WHERE workspace_id = ? AND search_run_id = ?").get(workspace.id, run.id) as { count: number }).count,
+          opportunityCount: (this.database.prepare("SELECT COUNT(DISTINCT opportunity_id) AS count FROM source_observations WHERE workspace_id = ? AND search_run_id = ?").get(workspace.id, run.id) as { count: number }).count
+        }
+      })),
+      feedback: feedback.map((item) => ({ id: item.id, opportunityId: item.opportunity_id, disposition: item.disposition, preferenceVersion: item.preference_version, reason: null, createdAt: item.created_at })),
+      applicationPackets: packets.map((packet) => ({
+        id: packet.id,
+        opportunityId: packet.opportunity_id,
+        status: packet.status,
+        fields: (this.database.prepare("SELECT field_key, label, classification FROM application_fields WHERE workspace_id = ? AND packet_id = ? ORDER BY id").all(workspace.id, packet.id) as Array<{ field_key: string; label: string; classification: ApplicationFieldClassification }>).map((field) => ({ key: field.field_key, label: field.label, classification: field.classification })),
+        createdAt: packet.created_at,
+        updatedAt: packet.updated_at
+      })),
+      opportunities: opportunities.map((row) => {
+        const opportunity = this.opportunityFromRow(row);
+        return { id: opportunity.id, kind: opportunity.kind, company: opportunity.company, title: opportunity.title, location: opportunity.location, canonicalApplyUrl: opportunity.canonicalApplyUrl, eligibility: opportunity.eligibility, evidenceStatus: opportunity.evidenceStatus, updatedAt: opportunity.updatedAt };
+      })
+    };
   }
 
   private recordOpportunity(workspaceId: string, runId: string, input: OpportunityInput) {

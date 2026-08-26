@@ -118,8 +118,8 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
     },
     {
       name: "workspace_export",
-      description: "Export workspace data as JSON, Markdown, or CSV beneath its export directory.",
-      schema: z.object({ workspaceId, format: z.enum(["json", "markdown", "csv"]) }).strict(),
+      description: "Export workspace data as JSON, Markdown, or CSV beneath its export directory; JSON can explicitly include a redacted recovery snapshot.",
+      schema: z.object({ workspaceId, format: z.enum(["json", "markdown", "csv"]), includeContent: z.boolean().optional() }).strict(),
       handle: (input: Parameters<JobSearchService["exportWorkspace"]>[0]) => service.exportWorkspace(input)
     },
     {

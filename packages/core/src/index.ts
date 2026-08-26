@@ -10,7 +10,8 @@ export type {
   SearchRun,
   SourceObservation,
   TraceEvent,
-  Workspace
+  Workspace,
+  WorkspaceRecoverySnapshot
 } from "./service.js";
 export {
   applicationFieldClassificationSchema,

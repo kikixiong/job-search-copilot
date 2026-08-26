@@ -28,6 +28,6 @@ Use `application_packet_upsert` to save a `draft` with the reviewed field list; 
 
 ## Browser and submission boundary
 
-Browser assistance is visible and begins only after the user requests it. On a supported official page, show the proposed safe value and the next step; stop before review/submit. For LinkedIn, Indeed, Workday, or an unknown domain, provide a field-by-field copy table instead of browser filling. Never log in, reuse cookies, solve CAPTCHA/MFA, enter consent/signature, send anything, or press final submit.
+Browser assistance is visible and begins only after the user requests it. Use browser prefill only for the exact allowlisted hosts in `application-safety.md`, after a current audit and only for non-sensitive reviewed values; show each proposed value and stop before review/submit. For LinkedIn, Indeed, Workday, company-owned unknown domains, or any other domain, provide a field-by-field copy table instead. Never log in, reuse cookies, solve CAPTCHA/MFA, enter consent/signature, send anything, or press final submit.
 
 State the packet status, user decision needed, and unresolved facts. The user separately records an actual application after manual submission. Read [application-safety.md](../../references/application-safety.md) and [trace-fields.md](../../references/trace-fields.md) for domain and privacy rules.

@@ -1,6 +1,6 @@
 ---
 name: run-job-search-loop
-description: Use when a user requests the complete resume-to-application job-search workflow or needs to resume an interrupted, confirmed job-search project.
+description: Use when a user requests the complete resume-to-application job-search workflow, feedback-driven re-search and application preparation, or needs to resume an interrupted, confirmed job-search project.
 ---
 
 # Run Job Search Loop
@@ -9,7 +9,7 @@ Orchestrate only the confirmed positioning → search → evidence review → fe
 
 ## Recover and report the current phase
 
-Open the named workspace with `workspace_open`. Use the existing workspace/run/profile tool results and `workspace_export`/`opportunities_query` as needed to recover the saved state; do not read or write the database/files directly.
+Open the named workspace with `workspace_open`, then call `workspace_export` with `format: "json"` and `includeContent: true`. Recover only from its returned redacted structured snapshot (latest profile/tracks, search brief, preference, runs, feedback, packet review metadata, and opportunity summaries); never read the exported file, database, or scratch notes directly.
 
 At every phase boundary, show a compact status block:
 

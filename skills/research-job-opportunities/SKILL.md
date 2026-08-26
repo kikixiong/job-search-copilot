@@ -1,6 +1,6 @@
 ---
 name: research-job-opportunities
-description: Use when finding, refreshing, verifying, comparing, or shortlisting job or internship opportunities for an already confirmed candidate profile.
+description: Use when finding, searching, refreshing, verifying, comparing, or shortlisting job or internship opportunities.
 ---
 
 # Research Job Opportunities

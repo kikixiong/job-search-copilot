@@ -377,6 +377,49 @@ test("exports JSON, Markdown, and CSV only beneath the workspace export director
   });
 });
 
+test("returns a redacted recovery snapshot only when a JSON export requests content", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Snapshot core" });
+    const profile = await service.commitProfile({
+      workspaceId: workspace.id,
+      baseVersion: null,
+      profile: { headline: "Synthetic Analyst", skills: ["SQL"], positioningTracks: [{ name: "Analytics", summary: "Evidence", targetRoles: ["Analyst"] }] }
+    });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["analyst"], locations: ["Remote"] }, preferenceVersion: null });
+    const batch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: "synthetic analyst", source: "test" },
+      opportunities: [{ kind: "job", company: "Synthetic Co", title: "Analyst", location: "Remote", eligibility: "eligible", evidence: { sourceUrl: "https://example.test/job", sourceType: "official", status: "open" } }]
+    });
+    await service.recordFeedback({ workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "interested", confirmedPreferenceSnapshot: { preferredLocations: ["Remote"], preferredRoles: ["Analyst"], notes: "Synthetic preference" }, preferenceBaseVersion: null });
+    const packet = await service.upsertApplicationPacket({
+      workspaceId: workspace.id,
+      opportunityId: batch.opportunities[0].id,
+      status: "draft",
+      fields: [{ key: "email", label: "Email", value: "private@example.test" }, { key: "cover_letter", label: "Cover letter", value: "Private Cover Letter" }]
+    });
+    await service.reviewApplicationPacket({ workspaceId: workspace.id, packetId: packet.id });
+
+    const legacy = await service.exportWorkspace({ workspaceId: workspace.id, format: "json" });
+    assert.equal("snapshot" in legacy, false);
+    assert.ok((await readFile(legacy.path, "utf8")).includes("Synthetic Analyst"));
+
+    const exported = await service.exportWorkspace({ workspaceId: workspace.id, format: "json", includeContent: true } as never) as { snapshot?: any };
+    assert.equal(exported.snapshot.workspace.id, workspace.id);
+    assert.equal(exported.snapshot.latestProfile.version, 1);
+    assert.deepEqual(exported.snapshot.latestSearchBrief.data, { keywords: ["analyst"], locations: ["Remote"] });
+    assert.equal(exported.snapshot.latestPreference.version, 1);
+    assert.equal(exported.snapshot.runs[0].summary.queryCount, 1);
+    assert.equal(exported.snapshot.feedback[0].disposition, "interested");
+    assert.equal(exported.snapshot.feedback[0].reason, null);
+    assert.equal(exported.snapshot.applicationPackets[0].status, "ready_for_prefill");
+    assert.equal(exported.snapshot.applicationPackets[0].fields[0].value, undefined);
+    const serialized = JSON.stringify(exported.snapshot);
+    for (const secret of ["private@example.test", "Private Cover Letter"]) assert.equal(serialized.includes(secret), false);
+  });
+});
+
 test("redacts authorization and application-answer containers including every descendant", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Nested trace secrets" });
