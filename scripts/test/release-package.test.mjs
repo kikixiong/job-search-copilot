@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 async function packager() {
   try { return await import("../build-release.mjs"); } catch { return {}; }
@@ -144,6 +147,20 @@ test("release input provenance allows exact virtual and dependency IDs but rejec
       repositoryRoot: root,
       inputIds: [join(root, "src/entry.js"), join(root, "src/private.js")]
     }), /untracked.*private\.js|private\.js.*untracked/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release MCP bundle resolves workspace packages from tracked source instead of generated dist", async () => {
+  const { buildMcpBundle } = await packager();
+  assert.equal(typeof buildMcpBundle, "function", "release MCP source bundler is not implemented");
+  const root = await mkdtemp(join(tmpdir(), "job-search-mcp-provenance-"));
+  try {
+    const inputIds = await buildMcpBundle({ root: repositoryRoot, outfile: join(root, "index.js") });
+    assert.ok(inputIds.some((input) => input.endsWith("packages/core/src/index.ts")));
+    assert.ok(inputIds.some((input) => input.endsWith("packages/viewer/src/index.ts")));
+    assert.equal(inputIds.some((input) => /packages\/(?:core|viewer)\/dist\//.test(input)), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

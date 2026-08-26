@@ -156,14 +156,16 @@ async function filesBeneath(directory) {
   return entries;
 }
 
-async function buildPlugin(stage) {
-  const plannedSources = await copyPlan(stage);
-  await mkdir(join(stage, "dist/mcp"), { recursive: true });
+export async function buildMcpBundle({ root, outfile }) {
   const nodeBuiltins = [...new Set(builtinModules.flatMap((name) => name.startsWith("node:") ? [name] : [name, `node:${name}`]))];
   const mcpBuild = await esbuild({
-    absWorkingDir: repositoryRoot,
-    entryPoints: [join(repositoryRoot, "packages/mcp/src/index.ts")],
-    outfile: join(stage, "dist/mcp/index.js"),
+    absWorkingDir: root,
+    alias: {
+      "@kikixiong/job-search-copilot-core": join(root, "packages/core/src/index.ts"),
+      "@kikixiong/job-search-copilot-viewer": join(root, "packages/viewer/src/index.ts")
+    },
+    entryPoints: [join(root, "packages/mcp/src/index.ts")],
+    outfile,
     bundle: true,
     format: "esm",
     platform: "node",
@@ -177,7 +179,15 @@ async function buildPlugin(stage) {
     logLevel: "warning",
     metafile: true
   });
-  await validateBuildInputProvenance({ repositoryRoot, inputIds: Object.keys(mcpBuild.metafile.inputs) });
+  const inputIds = Object.keys(mcpBuild.metafile.inputs);
+  await validateBuildInputProvenance({ repositoryRoot: root, inputIds });
+  return inputIds;
+}
+
+async function buildPlugin(stage) {
+  const plannedSources = await copyPlan(stage);
+  await mkdir(join(stage, "dist/mcp"), { recursive: true });
+  await buildMcpBundle({ root: repositoryRoot, outfile: join(stage, "dist/mcp/index.js") });
   const staticOutputs = await buildViewerAssets({
     root: join(repositoryRoot, "packages/viewer"),
     outDir: join(stage, "dist/static"),
