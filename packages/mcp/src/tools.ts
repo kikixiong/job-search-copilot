@@ -7,6 +7,7 @@ import {
   opportunityKindSchema,
   preferenceSnapshotDataSchema,
   profileDataSchema,
+  queryAttemptInputSchema,
   searchBriefDataSchema
 } from "@kikixiong/job-search-copilot-core";
 import { z } from "zod";
@@ -86,7 +87,7 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
     {
       name: "search_record_batch",
       description: "Transactionally record a query event and a batch of deduplicated opportunities.",
-      schema: z.object({ workspaceId, runId: z.uuid(), query: z.object({ text: z.string().trim().min(1), source: z.string().trim().min(1) }).strict().optional(), opportunities: z.array(opportunityInputSchema) }).strict(),
+      schema: z.object({ workspaceId, runId: z.uuid(), query: queryAttemptInputSchema.optional(), opportunities: z.array(opportunityInputSchema) }).strict(),
       handle: (input: Parameters<JobSearchService["recordSearchBatch"]>[0]) => service.recordSearchBatch(input)
     },
     {
@@ -98,7 +99,7 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
     {
       name: "opportunities_query",
       description: "Query structured opportunities in a workspace.",
-      schema: z.object({ workspaceId, kind: opportunityKindSchema.optional(), eligibility: eligibilitySchema.optional(), evidenceStatus: evidenceStatusSchema.optional(), limit: z.number().int().positive().max(1000).optional() }).strict(),
+      schema: z.object({ workspaceId, runId: z.uuid().optional(), kind: opportunityKindSchema.optional(), eligibility: eligibilitySchema.optional(), evidenceStatus: evidenceStatusSchema.optional(), limit: z.number().int().positive().max(1000).optional() }).strict(),
       handle: (input: Parameters<JobSearchService["queryOpportunities"]>[0]) => service.queryOpportunities(input)
     },
     {
@@ -134,7 +135,11 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
         if (!viewerLauncher) return { available: false, reason: "Viewer launcher is not installed." };
         const url = await viewerLauncher.urlFor(input.workspaceId);
         if (!isLoopback(url)) return { available: false, reason: "Viewer launcher refused a non-loopback URL." };
-        await viewerLauncher.open(url);
+        try {
+          await viewerLauncher.open(url);
+        } catch {
+          return { available: false, reason: "Desktop browser opener is unavailable.", code: "browser_open_failed" };
+        }
         return { available: true, url };
       }
     }

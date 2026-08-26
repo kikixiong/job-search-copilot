@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import JSZip from "jszip";
 
 const expectedTools = [
   "workspace_open",
@@ -60,6 +61,23 @@ function syntheticPdf(text) {
   return Buffer.from(output);
 }
 
+async function syntheticDocx(text) {
+  const archive = new JSZip();
+  archive.file("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+  archive.file("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  archive.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
+  return archive.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+export async function syntheticResumeFixtures() {
+  return [
+    { name: "synthetic-resume.pdf", contents: syntheticPdf("Synthetic packaged PDF analyst"), expected: "Synthetic packaged PDF analyst" },
+    { name: "synthetic-resume.docx", contents: await syntheticDocx("Synthetic packaged DOCX engineer"), expected: "Synthetic packaged DOCX engineer" },
+    { name: "synthetic-resume.txt", contents: Buffer.from("Synthetic packaged TXT researcher\n"), expected: "Synthetic packaged TXT researcher" },
+    { name: "synthetic-resume.md", contents: Buffer.from("# Synthetic packaged Markdown scientist\n"), expected: "Synthetic packaged Markdown scientist" }
+  ];
+}
+
 export async function runReleaseSmoke() {
   const extractionRoot = await mkdtemp(join(tmpdir(), "job-search-isolated-release-"));
   let client;
@@ -87,10 +105,13 @@ export async function runReleaseSmoke() {
     await client.connect(transport);
     assert.deepEqual((await client.listTools()).tools.map(({ name }) => name), expectedTools);
     const workspace = structured(await client.callTool({ name: "workspace_open", arguments: { name: "Synthetic packaged smoke" } }));
-    const resumePath = join(arbitraryCallerDirectory, "synthetic-resume.pdf");
-    await writeFile(resumePath, syntheticPdf("Synthetic release analyst"));
-    const imported = structured(await client.callTool({ name: "resume_import", arguments: { workspaceId: workspace.id, sourcePath: resumePath } }));
-    assert.match(imported.extractedText, /Synthetic release analyst/);
+    const resumeFixtures = await syntheticResumeFixtures();
+    for (const fixture of resumeFixtures) {
+      const resumePath = join(arbitraryCallerDirectory, fixture.name);
+      await writeFile(resumePath, fixture.contents);
+      const imported = structured(await client.callTool({ name: "resume_import", arguments: { workspaceId: workspace.id, sourcePath: resumePath } }));
+      assert.match(imported.extractedText, new RegExp(fixture.expected));
+    }
     const launched = structured(await client.callTool({ name: "viewer_open", arguments: { workspaceId: workspace.id } }));
     assert.equal(launched.available, true);
     const exchange = await fetch(launched.url, { redirect: "manual" });
@@ -108,7 +129,7 @@ export async function runReleaseSmoke() {
     const assets = staticAssetPaths(html);
     assert.ok(assets.length >= 2, "Viewer page must reference bundled JS and CSS assets.");
     for (const asset of assets) assert.equal((await fetch(new URL(asset, cleanUrl), { headers: { cookie } })).status, 200, asset);
-    console.log(`Isolated archive smoke passed: ${expectedTools.length} MCP tools, bundled PDF import, Viewer auth, and ${assets.length} static assets.`);
+    console.log(`Isolated archive smoke passed: ${expectedTools.length} MCP tools, bundled PDF/DOCX/TXT/Markdown imports, Viewer auth, and ${assets.length} static assets.`);
   } finally {
     try {
       if (client) await client.close();

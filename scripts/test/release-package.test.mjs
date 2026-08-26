@@ -90,12 +90,60 @@ test("release Viewer build ignores an untracked public sentinel and reports only
     execFileSync("git", ["init", "-q"], { cwd: root });
     execFileSync("git", ["add", "packages/viewer/index.html", "packages/viewer/src/main.js"], { cwd: root });
 
-    const emitted = await buildViewerAssets({ root: viewerRoot, outDir: output, configFile: false });
+    const emitted = await buildViewerAssets({ root: viewerRoot, outDir: output });
     assert.ok(emitted.includes("index.html"));
     assert.ok(emitted.some((path) => path.startsWith("assets/") && path.endsWith(".js")));
     assert.match(await readFile(join(output, emitted.find((path) => path.endsWith(".js"))), "utf8"), /tracked-viewer-asset/);
     await assert.rejects(readFile(join(output, "private-note.txt")), /ENOENT/);
     assert.equal(emitted.includes("private-note.txt"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release Viewer provenance rejects an untracked transitive module", async () => {
+  const { buildViewerAssets } = await packager();
+  const root = await mkdtemp(join(tmpdir(), "job-search-viewer-provenance-"));
+  const viewerRoot = join(root, "packages/viewer");
+  const output = join(root, "stage/dist/static");
+  try {
+    await mkdir(join(viewerRoot, "src"), { recursive: true });
+    await writeFile(join(viewerRoot, "index.html"), '<script type="module" src="/src/main.js"></script>\n');
+    await writeFile(join(viewerRoot, "src/main.js"), 'import { privateValue } from "./private.js"; document.body.textContent = privateValue;\n');
+    await writeFile(join(viewerRoot, "src/private.js"), 'export const privateValue = "untracked-transitive";\n');
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "packages/viewer/index.html", "packages/viewer/src/main.js"], { cwd: root });
+
+    await assert.rejects(
+      buildViewerAssets({ root: viewerRoot, outDir: output }),
+      /untracked.*private\.js|private\.js.*untracked|provenance/i
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release input provenance allows exact virtual and dependency IDs but rejects untracked repository files", async () => {
+  const { validateBuildInputProvenance } = await packager();
+  assert.equal(typeof validateBuildInputProvenance, "function", "build input provenance gate is not implemented");
+  const root = await mkdtemp(join(tmpdir(), "job-search-build-provenance-"));
+  try {
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "node_modules/example"), { recursive: true });
+    await writeFile(join(root, "src/entry.js"), "export {};\n");
+    await writeFile(join(root, "src/private.js"), "export {};\n");
+    await writeFile(join(root, "node_modules/example/index.js"), "export {};\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "src/entry.js"], { cwd: root });
+
+    await assert.doesNotReject(validateBuildInputProvenance({
+      repositoryRoot: root,
+      inputIds: [join(root, "src/entry.js"), join(root, "node_modules/example/index.js"), "\0vite/module", "virtual:generated"]
+    }));
+    await assert.rejects(validateBuildInputProvenance({
+      repositoryRoot: root,
+      inputIds: [join(root, "src/entry.js"), join(root, "src/private.js")]
+    }), /untracked.*private\.js|private\.js.*untracked/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

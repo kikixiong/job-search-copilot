@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import nodePath, { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import parseSpdx from "spdx-expression-parse";
 import spdxLicenseList from "spdx-license-list/full.js";
@@ -7,6 +7,11 @@ import spdxLicenseList from "spdx-license-list/full.js";
 const compatibleLicenseIds = new Set(["0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "ISC", "MIT", "Zlib"]);
 const compatibleLegacyNames = new Set(["BSD"]);
 const compatibleExceptions = new Set(["Apache-2.0 WITH LLVM-exception"]);
+
+export function isPathInside(root, candidate, pathApi = nodePath) {
+  const relativePath = pathApi.relative(pathApi.resolve(root), pathApi.resolve(candidate));
+  return relativePath === "" || (!pathApi.isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${pathApi.sep}`));
+}
 
 function octal(value, width) {
   return value.toString(8).padStart(width - 1, "0") + "\0";

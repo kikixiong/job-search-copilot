@@ -292,6 +292,62 @@ const migrations = [
   `,
   `
     UPDATE application_fields SET value = '' WHERE classification = 'manual_only' AND value <> '';
+  `,
+  `
+    ALTER TABLE candidate_profile_versions ADD COLUMN targeting_constraints_json TEXT NOT NULL DEFAULT '{"schemaVersion":1,"status":"unknown","targetKinds":[],"employmentTypes":[],"levels":[],"domains":[],"availability":null,"workAuthorization":[],"visa":null,"timing":null,"hardExclusions":[],"breadth":"balanced","unknowns":["Legacy data did not record targeting constraints."],"contradictions":[]}';
+
+    ALTER TABLE query_events ADD COLUMN outcome_status TEXT NOT NULL DEFAULT 'success'
+      CHECK(outcome_status IN ('success', 'no_results', 'timeout', 'blocked', 'limited', 'missing', 'error'));
+    ALTER TABLE query_events ADD COLUMN retrieved_at TEXT;
+    ALTER TABLE query_events ADD COLUMN locator TEXT;
+    ALTER TABLE query_events ADD COLUMN source_tier TEXT NOT NULL DEFAULT 'discovery'
+      CHECK(source_tier IN ('primary', 'official_lead', 'discovery'));
+    ALTER TABLE query_events ADD COLUMN failure_code TEXT;
+    ALTER TABLE query_events ADD COLUMN failure_summary TEXT;
+    UPDATE query_events SET retrieved_at = created_at, locator = source WHERE retrieved_at IS NULL OR locator IS NULL;
+
+    ALTER TABLE source_observations ADD COLUMN source_tier TEXT
+      CHECK(source_tier IN ('primary', 'official_lead', 'discovery'));
+    ALTER TABLE source_observations ADD COLUMN retrieved_at TEXT;
+    ALTER TABLE source_observations ADD COLUMN locator TEXT;
+    ALTER TABLE source_observations ADD COLUMN confidence TEXT NOT NULL DEFAULT 'unknown'
+      CHECK(confidence IN ('high', 'medium', 'low', 'unknown'));
+    ALTER TABLE source_observations ADD COLUMN deadline TEXT;
+    ALTER TABLE source_observations ADD COLUMN conflict_json TEXT;
+    ALTER TABLE source_observations ADD COLUMN dedupe_decision_json TEXT NOT NULL DEFAULT '{"action":"legacy","matchedBy":"unknown","survivorOpportunityId":null,"mergedOpportunityIds":[]}';
+    UPDATE source_observations
+      SET source_tier = CASE source_type WHEN 'official' THEN 'primary' ELSE 'discovery' END,
+          retrieved_at = observed_at,
+          locator = source_url
+      WHERE source_tier IS NULL OR retrieved_at IS NULL OR locator IS NULL;
+
+    CREATE INDEX query_events_run_idx ON query_events(workspace_id, search_run_id);
+    CREATE INDEX source_observations_run_idx ON source_observations(workspace_id, search_run_id);
+    CREATE INDEX match_assessments_run_idx ON match_assessments(workspace_id, search_run_id);
+
+    CREATE TRIGGER search_runs_terminal_immutable
+      BEFORE UPDATE OF status ON search_runs
+      WHEN OLD.status <> 'running' OR NEW.status NOT IN ('completed', 'failed')
+      BEGIN SELECT RAISE(ABORT, 'Search run is closed or transition is invalid.'); END;
+    CREATE TRIGGER query_events_require_running_run
+      BEFORE INSERT ON query_events
+      WHEN (SELECT status FROM search_runs WHERE id = NEW.search_run_id AND workspace_id = NEW.workspace_id) <> 'running'
+      BEGIN SELECT RAISE(ABORT, 'Search run is closed.'); END;
+    CREATE TRIGGER source_observations_require_running_run
+      BEFORE INSERT ON source_observations
+      WHEN (SELECT status FROM search_runs WHERE id = NEW.search_run_id AND workspace_id = NEW.workspace_id) <> 'running'
+      BEGIN SELECT RAISE(ABORT, 'Search run is closed.'); END;
+    CREATE TRIGGER match_assessments_require_running_run
+      BEFORE INSERT ON match_assessments
+      WHEN (SELECT status FROM search_runs WHERE id = NEW.search_run_id AND workspace_id = NEW.workspace_id) <> 'running'
+      BEGIN SELECT RAISE(ABORT, 'Search run is closed.'); END;
+    CREATE TRIGGER trace_events_require_running_run
+      BEFORE INSERT ON trace_events
+      WHEN NEW.run_id IS NOT NULL AND (SELECT status FROM search_runs WHERE id = NEW.run_id AND workspace_id = NEW.workspace_id) <> 'running'
+      BEGIN SELECT RAISE(ABORT, 'Search run is closed.'); END;
+  `,
+  `
+    UPDATE application_fields SET value = '' WHERE classification = 'manual_only' AND value <> '';
   `
 ];
 

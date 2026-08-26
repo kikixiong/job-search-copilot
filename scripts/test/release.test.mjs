@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { gunzipSync } from "node:zlib";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,16 @@ test("writes sorted deterministic tar metadata under one plugin root", async () 
   assert.equal(tar.subarray(0, 100).toString().replaceAll("\0", ""), "job-search-copilot/a.txt");
   assert.equal(tar.subarray(136, 148).toString().replaceAll("\0", "").trim(), "00000000000");
   assert.equal(tar.subarray(1024, 1124).toString().replaceAll("\0", ""), "job-search-copilot/z.txt");
+});
+
+test("release containment uses path-relative semantics for Windows paths", async () => {
+  const { isPathInside } = await releaseModule();
+  assert.equal(typeof isPathInside, "function", "release containment helper is not implemented");
+  const root = String.raw`C:\repo\release`;
+  assert.equal(isPathInside(root, String.raw`C:\repo\release\job-search-copilot`, win32), true);
+  assert.equal(isPathInside(root, String.raw`C:\repo\release-escape\job-search-copilot`, win32), false);
+  assert.equal(isPathInside(root, String.raw`C:\repo\outside`, win32), false);
+  assert.equal(isPathInside(root, String.raw`D:\repo\release\job-search-copilot`, win32), false);
 });
 
 test("builds a CycloneDX production inventory without development packages", async () => {

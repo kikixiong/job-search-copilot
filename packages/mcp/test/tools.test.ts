@@ -82,6 +82,100 @@ test("runs a representative workspace-profile-search-opportunity vertical path t
   });
 });
 
+test("persists structured source failures and exact-run provenance through MCP recovery and Viewer", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-provenance-"));
+  const service = new JobSearchService({ dataRoot });
+  const launcher = createViewerLauncher({ service, openBrowser: async () => {} });
+  const registry = createToolRegistry({ service, viewerLauncher: launcher });
+  try {
+    const constraints = {
+      schemaVersion: 1,
+      status: "confirmed",
+      targetKinds: ["internship"],
+      employmentTypes: ["internship"],
+      levels: ["entry"],
+      domains: ["machine learning"],
+      availability: "2026-09",
+      workAuthorization: ["China"],
+      visa: "not required",
+      timing: "2026 autumn recruiting",
+      hardExclusions: ["unpaid"],
+      breadth: "balanced",
+      unknowns: [],
+      contradictions: []
+    };
+    const workspace = await registry.invoke("workspace_open", { name: "Vertical provenance" });
+    const profile = await registry.invoke("profile_commit", {
+      workspaceId: workspace.id,
+      baseVersion: null,
+      profile: { headline: "ML internship candidate", skills: ["Python"], positioningTracks: [], targetingConstraints: constraints }
+    });
+    const run = await registry.invoke("search_run_begin", {
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["machine learning intern"], locations: ["Shanghai"], targetingConstraints: constraints },
+      preferenceVersion: null
+    });
+    await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: "site:careers.example.test ML intern", source: "Example careers", status: "timeout", retrievedAt: "2026-08-27T01:00:00.000Z", locator: "https://careers.example.test/search?q=ml", sourceTier: "primary", failure: { code: "TIMEOUT", summary: "Official lookup timed out" } },
+      opportunities: []
+    });
+    await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: "Example ATS ML intern", source: "Example ATS", status: "blocked", retrievedAt: "2026-08-27T01:01:00.000Z", locator: "https://ats.example.test/jobs", sourceTier: "primary", failure: { code: "HTTP_403", summary: "Official ATS returned 403" } },
+      opportunities: []
+    });
+    const social = await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: "Example ML internship lead", source: "Community index", status: "success", retrievedAt: "2026-08-27T01:02:00.000Z", locator: "https://community.example.test/posts/17", sourceTier: "discovery" },
+      opportunities: [{ kind: "internship", company: "Example Research", title: "ML Intern", location: "Shanghai", canonicalApplyUrl: "https://jobs.example.test/ml-intern", eligibility: "eligible", evidence: { sourceUrl: "https://community.example.test/posts/17", sourceType: "community", sourceTier: "discovery", status: "lead", locator: "post#17", confidence: "low", retrievedAt: "2026-08-27T01:02:00.000Z", deadline: null }, match: { score: 75, factors: { skills: 75 }, reasons: ["Python"], gaps: [], unknowns: [] } }]
+    });
+    await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: "Example Research ML Intern official", source: "Example ATS", status: "success", retrievedAt: "2026-08-27T01:03:00.000Z", locator: "https://jobs.example.test/ml-intern", sourceTier: "primary" },
+      opportunities: [{ kind: "internship", company: "Example Research", title: "ML Intern", location: "Shanghai", canonicalApplyUrl: "https://jobs.example.test/ml-intern", eligibility: "eligible", evidence: { sourceUrl: "https://jobs.example.test/ml-intern", sourceType: "official", sourceTier: "primary", status: "open", locator: "main#job-description", confidence: "high", retrievedAt: "2026-08-27T01:03:00.000Z", deadline: "2026-09-30T23:59:59.000Z", conflict: { kind: "lifecycle", summary: "No conflicting official observation", relatedLocator: "post#17" } }, match: { score: 88, factors: { skills: 88 }, reasons: ["Official requirements match"], gaps: [], unknowns: [] } }]
+    });
+    await registry.invoke("search_run_finish", { workspaceId: workspace.id, runId: run.id });
+
+    const exported = await registry.invoke("workspace_export", { workspaceId: workspace.id, format: "json", includeContent: true });
+    const recoveredRun = exported.snapshot.runs.find((item: { id: string }) => item.id === run.id);
+    assert.deepEqual(recoveredRun.queryAttempts.map((attempt: { status: string }) => attempt.status), ["timeout", "blocked", "success", "success"]);
+    assert.deepEqual(recoveredRun.queryAttempts.slice(0, 2).map((attempt: { failure: { code: string } }) => attempt.failure.code), ["TIMEOUT", "HTTP_403"]);
+    assert.deepEqual(recoveredRun.searchBrief.targetingConstraints, constraints);
+    const recoveredOpportunity = exported.snapshot.opportunities.find((item: { id: string }) => item.id === social.opportunities[0].id);
+    assert.deepEqual(recoveredOpportunity.sourceObservations.map((observation: { runId: string }) => observation.runId), [run.id, run.id]);
+    assert.equal(recoveredOpportunity.sourceObservations[1].locator, "main#job-description");
+    assert.equal(recoveredOpportunity.sourceObservations[1].sourceTier, "primary");
+    assert.equal(recoveredOpportunity.sourceObservations[1].confidence, "high");
+    assert.equal(recoveredOpportunity.sourceObservations[1].retrievedAt, "2026-08-27T01:03:00.000Z");
+    assert.equal(recoveredOpportunity.sourceObservations[1].dedupeDecision.action, "matched");
+    assert.equal(recoveredOpportunity.match.runId, run.id);
+
+    const scoped = await registry.invoke("opportunities_query", { workspaceId: workspace.id, runId: run.id });
+    assert.equal(scoped[0].match.runId, run.id);
+    assert.deepEqual(scoped[0].sourceObservations.map((observation: { runId: string }) => observation.runId), [run.id, run.id]);
+
+    const viewerLaunch = await registry.invoke("viewer_open", { workspaceId: workspace.id });
+    const tokenResponse = await fetch(viewerLaunch.url, { redirect: "manual" });
+    const cleanUrl = new URL(tokenResponse.headers.get("location")!, viewerLaunch.url);
+    const cookie = tokenResponse.headers.get("set-cookie")!.split(";", 1)[0];
+    const viewerSnapshot = await (await fetch(new URL("api/snapshot", cleanUrl), { headers: { cookie } })).json() as any;
+    const viewerRun = viewerSnapshot.runs.find((item: { id: string }) => item.id === run.id);
+    assert.deepEqual(viewerRun.queryAttempts.slice(0, 2).map((attempt: { status: string }) => attempt.status), ["timeout", "blocked"]);
+    assert.equal(viewerSnapshot.opportunities[0].sourceObservations[1].runId, run.id);
+    assert.equal(viewerSnapshot.opportunities[0].sourceObservations[1].locator, "main#job-description");
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  } finally {
+    await launcher.close();
+    service.close();
+  }
+});
+
 test("returns a redacted, versioned recovery snapshot through workspace_export without adding tools", async () => {
   await withRegistry(async (registry) => {
     const workspace = await registry.invoke("workspace_open", { name: "Snapshot MCP" });
@@ -191,6 +285,26 @@ test("viewer_open reports unavailable without Task 4 and refuses non-loopback la
   }
 });
 
+test("viewer_open returns a structured unavailable result when the desktop opener is missing", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-missing-opener-"));
+  const service = new JobSearchService({ dataRoot });
+  try {
+    const workspace = await service.openWorkspace({ name: "Missing opener" });
+    const registry = createToolRegistry({
+      service,
+      viewerLauncher: {
+        urlFor: async () => "http://127.0.0.1:4123/?token=" + "a".repeat(64),
+        open: async () => { throw Object.assign(new Error("spawn xdg-open ENOENT"), { code: "ENOENT" }); }
+      }
+    });
+    const result = await registry.invoke("viewer_open", { workspaceId: workspace.id });
+    assert.deepEqual(result, { available: false, reason: "Desktop browser opener is unavailable.", code: "browser_open_failed" });
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  } finally {
+    service.close();
+  }
+});
+
 test("viewer_open starts the real loopback launcher through an in-memory handler", async () => {
   const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-real-viewer-"));
   const service = new JobSearchService({ dataRoot });
@@ -238,6 +352,21 @@ test("MCP packet review uses the same revision and stable-field service invarian
     const reviewed = await registry.invoke("application_packet_review", { workspaceId: workspace.id, packetId: packet.id, revision: packet.revision, acknowledgedFieldIds: [confirm.id] });
     assert.equal(reviewed.status, "ready_for_prefill");
     assert.equal(reviewed.revision, packet.revision + 1);
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  });
+});
+
+test("MCP rejects populated multilingual consent, signature, and final-action fields", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "MCP multilingual manual controls" });
+    for (const field of [
+      { key: "primary_action", label: "最终提交" },
+      { key: "terms", label: "同意条款" },
+      { key: "e_signature", label: "电子签名" },
+      { key: "submit", label: "Submit" }
+    ]) {
+      await assert.rejects(registry.invoke("application_packet_upsert", { workspaceId: workspace.id, status: "draft", fields: [{ ...field, value: "must-not-persist" }] }), /manual.only|blank|手动/i);
+    }
     assert.deepEqual(TOOL_NAMES, expectedTools);
   });
 });

@@ -20,13 +20,13 @@ const emptySnapshot = {
 const populatedSnapshot = {
   workspace: { id: "10000000-0000-4000-8000-000000000000", name: "技术岗位核验", createdAt: "2026-01-01T00:00:00.000Z" },
   resumeImported: true,
-  latestProfile: { version: 2, headline: "偏产品的前端工程师", skills: ["TypeScript", "React"], positioningTracks: [{ name: "产品工程", summary: "将复杂流程做成清晰产品", targetRoles: ["Product Engineer"] }], createdAt: "2026-01-02T00:00:00.000Z" },
-  latestSearchBrief: { version: 3, data: { keywords: ["product engineer"], locations: ["Remote"] }, createdAt: "2026-01-03T00:00:00.000Z" },
+  latestProfile: { version: 2, headline: "偏产品的前端工程师", skills: ["TypeScript", "React"], positioningTracks: [{ name: "产品工程", summary: "将复杂流程做成清晰产品", targetRoles: ["Product Engineer"] }], targetingConstraints: { schemaVersion: 1, status: "confirmed", targetKinds: ["internship"], employmentTypes: ["internship"], levels: ["entry"], domains: ["machine learning"], availability: "2026-09", workAuthorization: ["China"], visa: "not required", timing: "2026 autumn", hardExclusions: ["unpaid"], breadth: "balanced", unknowns: [], contradictions: [] }, createdAt: "2026-01-02T00:00:00.000Z" },
+  latestSearchBrief: { version: 3, data: { keywords: ["product engineer"], locations: ["Remote"], targetingConstraints: { schemaVersion: 1, status: "confirmed", targetKinds: ["internship"], employmentTypes: ["internship"], levels: ["entry"], domains: ["machine learning"], availability: "2026-09", workAuthorization: ["China"], visa: "not required", timing: "2026 autumn", hardExclusions: ["unpaid"], breadth: "balanced", unknowns: [], contradictions: [] } }, createdAt: "2026-01-03T00:00:00.000Z" },
   latestPreference: null,
-  runs: [{ id: "20000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", profileVersion: 2, searchBriefVersion: 3, preferenceVersion: null, status: "failed", startedAt: "2026-01-03T00:00:00.000Z", finishedAt: "2026-01-03T00:01:00.000Z", searchBrief: { keywords: ["product engineer"], locations: ["Remote"] }, summary: { queryCount: 2, sourceCount: 2, opportunityCount: 1 } }],
+  runs: [{ id: "20000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", profileVersion: 2, searchBriefVersion: 3, preferenceVersion: null, status: "failed", startedAt: "2026-01-03T00:00:00.000Z", finishedAt: "2026-01-03T00:01:00.000Z", searchBrief: { keywords: ["product engineer"], locations: ["Remote"], targetingConstraints: { schemaVersion: 1, status: "confirmed", targetKinds: ["internship"], employmentTypes: ["internship"], levels: ["entry"], domains: ["machine learning"], availability: "2026-09", workAuthorization: ["China"], visa: "not required", timing: "2026 autumn", hardExclusions: ["unpaid"], breadth: "balanced", unknowns: [], contradictions: [] } }, queryAttempts: [{ id: "q1", runId: "20000000-0000-4000-8000-000000000000", text: "official Product Engineer", source: "Synthetic board", status: "timeout", retrievedAt: "2026-01-03T00:00:30.000Z", locator: "https://boards.example.test/jobs", sourceTier: "primary", failure: { code: "TIMEOUT", summary: "Official lookup timed out" } }], summary: { queryCount: 2, sourceCount: 2, opportunityCount: 1 } }],
   feedback: [],
   opportunities: [
-    { id: "30000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", kind: "job", company: "合成科技", title: "Product Engineer", location: "Remote", canonicalApplyUrl: "https://boards.greenhouse.io/synthetic/jobs/1", requisitionId: "SYN-1", eligibility: "eligible", evidenceStatus: "verified_open", sourceObservations: [{ id: "o1", sourceUrl: "https://community.example/lead", sourceType: "community", status: "lead", observedAt: "2026-01-03T00:00:00.000Z" }, { id: "o2", sourceUrl: "https://boards.greenhouse.io/synthetic/jobs/1", sourceType: "official", status: "open", observedAt: "2026-01-03T00:01:00.000Z" }], match: { score: 91, factors: { 技能: 95, 地点: 100 }, reasons: ["技能高度匹配"], gaps: ["行业经验待补充"], unknowns: ["薪资范围未披露"] }, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:01:00.000Z" },
+    { id: "30000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", kind: "job", company: "合成科技", title: "Product Engineer", location: "Remote", canonicalApplyUrl: "https://boards.greenhouse.io/synthetic/jobs/1", requisitionId: "SYN-1", eligibility: "eligible", evidenceStatus: "verified_open", sourceObservations: [{ id: "o1", runId: "20000000-0000-4000-8000-000000000000", sourceUrl: "https://community.example/lead", sourceType: "community", sourceTier: "discovery", status: "lead", observedAt: "2026-01-03T00:00:00.000Z", retrievedAt: "2026-01-03T00:00:00.000Z", locator: "post#lead", confidence: "low", deadline: null, conflict: null, dedupeDecision: { action: "created", matchedBy: "none", survivorOpportunityId: "30000000-0000-4000-8000-000000000000", mergedOpportunityIds: [] } }, { id: "o2", runId: "20000000-0000-4000-8000-000000000000", sourceUrl: "https://boards.greenhouse.io/synthetic/jobs/1", sourceType: "official", sourceTier: "primary", status: "open", observedAt: "2026-01-03T00:01:00.000Z", retrievedAt: "2026-01-03T00:01:00.000Z", locator: "main#job-description", confidence: "high", deadline: "2026-02-01T00:00:00.000Z", conflict: null, dedupeDecision: { action: "matched", matchedBy: "url", survivorOpportunityId: "30000000-0000-4000-8000-000000000000", mergedOpportunityIds: [] } }], match: { runId: "20000000-0000-4000-8000-000000000000", score: 91, factors: { 技能: 95, 地点: 100 }, reasons: ["技能高度匹配"], gaps: ["行业经验待补充"], unknowns: ["薪资范围未披露"] }, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:01:00.000Z" },
     { id: "40000000-0000-4000-8000-000000000000", workspaceId: "10000000-0000-4000-8000-000000000000", kind: "job", company: "线索公司", title: "Frontend Engineer", location: "上海", canonicalApplyUrl: null, requisitionId: null, eligibility: "unknown", evidenceStatus: "community_lead", sourceObservations: [{ id: "o3", sourceUrl: "https://community.example/2", sourceType: "community", status: "lead", observedAt: "2026-01-03T00:00:00.000Z" }], match: null, createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" }
   ],
   applicationPackets: [{ id: "50000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", status: "draft", revision: 4, audit: { version: 3, retrievedAt: new Date().toISOString(), destinationUrl: "https://boards.greenhouse.io/synthetic/jobs/1", status: "verified" }, guidance: { mode: "reviewed", reasons: [], auditVersion: 3 }, attachments: [{ name: "resume.pdf", status: "ready", locator: "packet.attachments.resume" }], unknowns: ["推荐人要求待核实"], fields: [{ id: "51000000-0000-4000-8000-000000000000", key: "email", label: "邮箱", classification: "safe", provenance: { source: "profile", locator: "profile.contact.email", reviewed: true, sensitive: false } }, { id: "52000000-0000-4000-8000-000000000000", key: "salary", label: "期望薪资", classification: "confirm", provenance: { source: "user_confirmed", locator: "conversation.salary", reviewed: true, sensitive: false } }, { id: "53000000-0000-4000-8000-000000000000", key: "signature", label: "签名", classification: "manual_only", provenance: { source: "unknown", locator: "live-form.signature", reviewed: false, sensitive: true } }], createdAt: "2026-01-03T00:00:00.000Z", updatedAt: "2026-01-03T00:00:00.000Z" }],
@@ -57,6 +57,28 @@ test("renders profile, grouped opportunities, evidence rail, run provenance, and
   assert.ok(screen.getByText("resume.pdf"));
   assert.ok(screen.getByText("推荐人要求待核实"));
   assert.equal(screen.queryByRole("button", { name: /提交申请/ }), null);
+});
+
+test("renders confirmed targeting, structured query failures, and complete source provenance", () => {
+  render(<ViewerApp initialSnapshot={populatedSnapshot} />);
+  const rail = screen.getByLabelText("证据轨：Product Engineer");
+  assert.ok(rail.textContent?.includes("main#job-description"));
+  assert.ok(rail.textContent?.includes("primary · high"));
+  assert.ok(rail.textContent?.includes("20000000-0000-4000-8000-000000000000"));
+  assert.ok(rail.textContent?.includes("matched · url"));
+
+  fireEvent.click(screen.getByRole("button", { name: "候选人档案" }));
+  assert.ok(screen.getByText("machine learning"));
+  assert.ok(screen.getByText("2026-09"));
+  assert.ok(screen.getByText("unpaid"));
+
+  fireEvent.click(screen.getByRole("button", { name: "搜索记录" }));
+  assert.ok(screen.getByRole("heading", { name: "固定运行范围" }));
+  assert.ok(screen.getByText("2026 autumn"));
+  assert.ok(screen.getByText("China"));
+  assert.ok(screen.getByText("Official lookup timed out"));
+  assert.ok(screen.getByText(/timeout · TIMEOUT/));
+  assert.ok(screen.getByText(/https:\/\/boards\.example\.test\/jobs/));
 });
 
 test("supports mobile/reduced-motion state, named keyboard controls, and click-only clipboard feedback", async () => {
@@ -124,6 +146,26 @@ test("gates negative feedback reason and binds application confirmation to revis
   fireEvent.click(screen.getByRole("button", { name: "完成材料审核" }));
   await waitFor(() => assert.equal(requests.length, 2));
   assert.deepEqual(requests[1].body, { packetId: "50000000-0000-4000-8000-000000000000", revision: 4, acknowledgedFieldIds: ["52000000-0000-4000-8000-000000000000"] });
+});
+
+test("selects the newest application packet and adopts the review response before another click", async () => {
+  const snapshot = structuredClone(populatedSnapshot);
+  const older = structuredClone(snapshot.applicationPackets[0]);
+  older.id = "60000000-0000-4000-8000-000000000000";
+  older.revision = 1;
+  older.updatedAt = "2026-01-01T00:00:00.000Z";
+  older.fields = [];
+  snapshot.applicationPackets = [older, snapshot.applicationPackets[0]];
+  Object.defineProperty(globalThis, "fetch", { configurable: true, value: async () => new Response(JSON.stringify({ id: "50000000-0000-4000-8000-000000000000", status: "ready_for_prefill", revision: 5 }), { status: 200, headers: { "content-type": "application/json" } }) });
+
+  render(<ViewerApp initialSnapshot={snapshot} />);
+  fireEvent.click(screen.getByRole("button", { name: "申请准备" }));
+  const selector = screen.getByRole("combobox", { name: "材料包选择" }) as HTMLSelectElement;
+  assert.equal(selector.value, "50000000-0000-4000-8000-000000000000");
+  fireEvent.click(screen.getByRole("checkbox", { name: "我已核对" }));
+  fireEvent.click(screen.getByRole("button", { name: "完成材料审核" }));
+  await waitFor(() => assert.equal(screen.getAllByText(/修订 5 · ready_for_prefill/).length, 2));
+  assert.equal((screen.getByRole("button", { name: "完成材料审核" }) as HTMLButtonElement).disabled, true);
 });
 
 test("uses latest official evidence, lists every observation, and associates failures by exact run ID", () => {

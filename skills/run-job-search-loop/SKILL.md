@@ -9,11 +9,11 @@ Orchestrate only the confirmed positioning → search → evidence review → fe
 
 ## Recover and report the current phase
 
-Open the named workspace with `workspace_open`, then call `workspace_export` with `format: "json"` and `includeContent: true`. Recover only from its returned redacted structured snapshot (latest profile/tracks, search brief, preference, runs, feedback, packet review metadata, and opportunity summaries); never read the exported file, database, or scratch notes directly.
+Open the named workspace with `workspace_open`, then call `workspace_export` with `format: "json"` and `includeContent: true`. Recover only from its returned redacted structured snapshot (latest profile/tracks and targeting constraints, each run's immutable SearchBrief constraints, structured query attempts/failures, preference, run IDs/status, feedback, packet review metadata, and opportunity summaries); never read the exported file, database, or scratch notes directly.
 
 At every phase boundary, show a compact status block:
 
-- workspace name/ID; profile, search-brief, preference, and run versions/IDs
+- workspace name/ID; profile, search-brief, preference, and run versions/IDs; targeting-constraint schema/status
 - current phase and completed action
 - next user decision required
 - recoverable failure or unknown, with the action to retry or resolve it
@@ -29,7 +29,7 @@ If a version is unavailable from persisted results, label it `unknown` and obtai
 
 ## Treat scope changes as new confirmed versions
 
-When the user changes role, location, level, employment type, timing, or hard exclusions, label existing results as based on their old profile/search-brief versions. Do not reinterpret or mix them with the new scope. Return to positioning, obtain explicit confirmation and a new profile version, then start a new confirmed search run. A new preference version likewise requires the user's explicit confirmation after a repeated feedback pattern.
+When the user changes target kind, role, location, level, domain, employment type, availability, work authorization/visa, timing, hard exclusions, or breadth, label existing results as based on their old profile/SearchBrief constraint snapshot. Do not reinterpret or mix observations, matches, dedupe decisions, or query outcomes across run IDs. Return to positioning when reusable facts changed, obtain explicit confirmation and a new profile version, then start a new confirmed search run with its own complete snapshot. A new preference version likewise requires the user's explicit confirmation after a repeated feedback pattern.
 
 Every refresh is explicitly user-triggered and becomes a recorded new run. Do not configure daily refreshes, background monitoring, scheduled searches, notifications, or autonomous follow-up.
 

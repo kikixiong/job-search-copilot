@@ -19,9 +19,9 @@ Treat location, graduation date, availability window, work authorization, compen
 
 Ask a single grouped set of only the unanswered high-impact questions:
 
-- Job or internship (or both), target roles, and target locations
-- Availability/start window and work authorization for those locations
-- Hard exclusions, including compensation only if it is a real exclusion
+- Job or internship (or both), employment type, target roles, level, domains, and target locations
+- Availability/start window, timing, work authorization, and visa/sponsorship facts for those locations
+- Hard exclusions, including compensation only if it is a real exclusion, plus the intended search breadth (`quick`, `balanced`, or `deep`)
 
 Do not create search terms, call `search_run_begin`, or choose a unique track while a contradiction or decision-critical hard constraint remains unresolved. If the user declines to answer, retain `unknown` rather than defaulting from the resume or pressure.
 
@@ -29,7 +29,9 @@ Do not create search terms, call `search_run_begin`, or choose a unique track wh
 
 Offer a **Positioning Brief** with one primary track and no more than two adjacent tracks. Each track includes target roles, resume evidence, material gaps or unknowns, and exclusions. Keep recommendations proportional to the evidence; label tentative reasoning as a proposal, not a candidate fact.
 
-End with an explicit approval question. Only after the user confirms the brief, call `profile_commit` with the current base version and a profile containing only supported `headline`, `skills`, and `positioningTracks`. Report the resulting profile version and that searches require a separate, user-directed step.
+End with an explicit approval question. Only after the user confirms the brief, call `profile_commit` with the current base version and a profile containing supported `headline`, `skills`, `positioningTracks`, and one complete version-1 `targetingConstraints` object. That strict object records `status`, target kinds, employment types, levels, domains, availability, work authorization, visa, timing, hard exclusions, breadth, unknowns, and contradictions. Use `confirmed` only when at least one target kind is selected and no contradiction remains; use `unknown` with explicit `unknowns`, or `contradiction` with explicit field/details entries. Never omit a decision-critical gap or invent a default.
+
+The profile owns the latest reusable positioning facts. A later search still requires a separate, user-directed `SearchBrief` containing a full `targetingConstraints` snapshot; that run snapshot may select a different confirmed breadth but must not silently reinterpret the profile. Report the resulting profile version and the exact status of its constraints.
 
 ## Guardrails and trace
 

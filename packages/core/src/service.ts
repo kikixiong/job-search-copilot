@@ -11,18 +11,25 @@ import {
   opportunityKeys,
   preferenceSnapshotDataSchema,
   profileDataSchema,
+  queryAttemptInputSchema,
   redactPublicText,
   redactPublicUrl,
   redactTraceAttributes,
+  safeUnknownTargetingConstraints,
   searchBriefDataSchema,
   type ApplicationFieldClassification,
   type Eligibility,
   type EvidenceStatus,
   type FeedbackDisposition,
+  type ObservationConflict,
   type OpportunityInput,
   type PreferenceSnapshotData,
   type ProfileData,
-  type SearchBriefData
+  type QueryOutcomeStatus,
+  type SearchBriefData,
+  type SourceConfidence,
+  type SourceTier,
+  type TargetingConstraints
 } from "./domain.js";
 import { inspectResume, storeResumeCopy } from "./resume.js";
 import { defaultDataRoot, ensureGeneratedDirectory, openDatabase, resolveInside, writeGeneratedFile } from "./storage.js";
@@ -32,8 +39,10 @@ export interface Workspace { id: string; name: string; attachmentDirectory: stri
 export interface ImportedResume { id: string; workspaceId: string; originalName: string; storedPath: string; sha256: string; extractedText: string; createdAt: string }
 export interface CandidateProfileVersion { id: string; workspaceId: string; version: number; profile: ProfileData; createdAt: string }
 export interface SearchRun { id: string; workspaceId: string; profileVersion: number; searchBriefVersion: number; preferenceVersion: number | null; status: "running" | "completed" | "failed"; startedAt: string; finishedAt: string | null }
-export interface SourceObservation { id: string; sourceUrl: string; sourceType: "official" | "community"; status: "open" | "closed" | "lead"; observedAt: string }
-export interface MatchAssessment { score: number; factors: Record<string, number>; reasons: string[]; gaps: string[]; unknowns: string[] }
+export interface QueryAttempt { id: string; runId: string; text: string; source: string; status: QueryOutcomeStatus; retrievedAt: string; locator: string; sourceTier: SourceTier; failure: { code: string; summary: string } | null }
+export interface DedupeDecision { action: "created" | "matched" | "merged" | "legacy"; matchedBy: OpportunityAliasKeyType | "none" | "unknown"; survivorOpportunityId: string | null; mergedOpportunityIds: string[] }
+export interface SourceObservation { id: string; runId: string; sourceUrl: string; sourceType: "official" | "community"; sourceTier: SourceTier; status: "open" | "closed" | "lead"; observedAt: string; retrievedAt: string; locator: string; confidence: SourceConfidence; deadline: string | null; conflict: ObservationConflict | null; dedupeDecision: DedupeDecision }
+export interface MatchAssessment { runId: string; score: number; factors: Record<string, number>; reasons: string[]; gaps: string[]; unknowns: string[] }
 export interface Opportunity { id: string; workspaceId: string; kind: "job" | "internship"; company: string; title: string; location: string; canonicalApplyUrl: string | null; requisitionId: string | null; eligibility: Eligibility; evidenceStatus: EvidenceStatus; sourceObservations: SourceObservation[]; match: MatchAssessment | null; createdAt: string; updatedAt: string }
 export interface ApplicationFieldProvenance { source: "profile" | "resume" | "user_confirmed" | "official" | "unknown"; locator: string; reviewed: boolean; sensitive: boolean }
 export interface ApplicationField { id: string; key: string; label: string; value: string; classification: ApplicationFieldClassification; provenance: ApplicationFieldProvenance | null }
@@ -47,11 +56,11 @@ export type PublicOpportunity = Omit<Opportunity, "canonicalApplyUrl" | "sourceO
 export interface RecoveryApplicationPacket { id: string; opportunityId: string | null; status: ApplicationPacket["status"]; revision: number; audit: (Omit<ApplicationAudit, "destinationUrl"> & { destinationUrl: string | null }) | null; guidance: ApplicationGuidanceDecision; attachments: ApplicationAttachment[]; unknowns: string[]; fields: Array<Pick<ApplicationField, "id" | "key" | "label" | "classification" | "provenance">>; createdAt: string; updatedAt: string }
 export interface WorkspaceRecoverySnapshot {
   workspace: { id: string; name: string; createdAt: string };
-  latestProfile: { version: number; headline: string; skills: string[]; positioningTracks: Array<{ name: string; summary: string; targetRoles: string[] }>; createdAt: string } | null;
+  latestProfile: { version: number; headline: string; skills: string[]; positioningTracks: Array<{ name: string; summary: string; targetRoles: string[] }>; targetingConstraints: TargetingConstraints; createdAt: string } | null;
   latestSearchBrief: { version: number; data: SearchBriefData; createdAt: string } | null;
   latestPreference: { version: number; data: Pick<PreferenceSnapshotData, "preferredLocations" | "preferredRoles">; createdAt: string } | null;
   resumeImported: boolean;
-  runs: Array<SearchRun & { searchBrief: SearchBriefData; summary: { queryCount: number; sourceCount: number; opportunityCount: number } }>;
+  runs: Array<SearchRun & { searchBrief: SearchBriefData; queryAttempts: QueryAttempt[]; summary: { queryCount: number; sourceCount: number; opportunityCount: number } }>;
   feedback: Array<{ id: string; opportunityId: string; disposition: FeedbackDisposition; preferenceVersion: number | null; reason: string | null; createdAt: string }>;
   applicationPackets: RecoveryApplicationPacket[];
   opportunities: PublicOpportunity[];
@@ -64,14 +73,15 @@ type WorkspaceRow = { id: string; name: string; created_at: string };
 type ResumeRow = { id: string; workspace_id: string; original_name: string; stored_path: string; sha256: string; extracted_text: string; created_at: string };
 type SearchRunRow = { id: string; workspace_id: string; profile_version: number; search_brief_version: number; preference_version: number | null; status: SearchRun["status"]; started_at: string; finished_at: string | null };
 type OpportunityRow = { id: string; workspace_id: string; kind: Opportunity["kind"]; company: string; title: string; location: string; canonical_apply_url: string | null; requisition_id: string | null; eligibility: Eligibility; evidence_status: EvidenceStatus; created_at: string; updated_at: string };
-type ObservationRow = { id: string; source_url: string; source_type: SourceObservation["sourceType"]; status: SourceObservation["status"]; observed_at: string };
-type MatchRow = { score: number; factors_json: string; reasons_json: string; gaps_json: string; unknowns_json: string };
+type QueryAttemptRow = { id: string; search_run_id: string; query_text: string; source: string; outcome_status: QueryOutcomeStatus; retrieved_at: string | null; locator: string | null; source_tier: SourceTier; failure_code: string | null; failure_summary: string | null; created_at: string };
+type ObservationRow = { id: string; search_run_id: string; source_url: string; source_type: SourceObservation["sourceType"]; source_tier: SourceTier | null; status: SourceObservation["status"]; observed_at: string; retrieved_at: string | null; locator: string | null; confidence: SourceConfidence; deadline: string | null; conflict_json: string | null; dedupe_decision_json: string };
+type MatchRow = { search_run_id: string; score: number; factors_json: string; reasons_json: string; gaps_json: string; unknowns_json: string };
 type PacketRow = { id: string; workspace_id: string; opportunity_id: string | null; status: ApplicationPacket["status"]; revision: number; audit_version: number | null; audit_retrieved_at: string | null; audit_destination_url: string | null; audit_status: ApplicationAudit["status"] | null; attachments_json: string; unknowns_json: string; created_at: string; updated_at: string };
 type FieldRow = { id: string; field_key: string; label: string; value: string; classification: ApplicationFieldClassification; provenance_json: string | null };
 type TraceRow = { id: string; workspace_id: string; run_id: string | null; trace_id: string; span_id: string; parent_span_id: string | null; name: string; started_at: string; ended_at: string | null; status: TraceEvent["status"]; attributes_json: string };
 type OpportunityAliasKeyType = "url" | "requisition" | "fallback";
 
-const batchInputSchema = z.object({ query: z.object({ text: z.string().trim().min(1), source: z.string().trim().min(1) }).strict().optional(), opportunities: z.array(opportunityInputSchema) }).strict();
+const batchInputSchema = z.object({ query: queryAttemptInputSchema.optional(), opportunities: z.array(opportunityInputSchema) }).strict();
 const applicationFieldProvenanceSchema = z.object({ source: z.enum(["profile", "resume", "user_confirmed", "official", "unknown"]), locator: z.string().trim().min(1), reviewed: z.boolean(), sensitive: z.boolean() }).strict();
 const applicationFieldInputSchema = z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string(), provenance: applicationFieldProvenanceSchema.optional() }).strict();
 const applicationAuditSchema = z.object({ version: z.number().int().positive(), retrievedAt: z.iso.datetime(), destinationUrl: z.url(), status: z.enum(["verified", "failed"]) }).strict();
@@ -82,7 +92,12 @@ const traceInputSchema = z.object({
 }).strict();
 
 function parseJson<T>(value: string) { return JSON.parse(value) as T }
-function csvCell(value: unknown) { return `"${String(value ?? "").replaceAll('"', '""')}"` }
+export function csvCell(value: unknown) {
+  const text = String(value ?? "");
+  const spreadsheetFormula = /^[\u0000-\u0008\u000b\u000c\u000e-\u0020]*[\t\r=+\-@]/u.test(text);
+  const neutralized = spreadsheetFormula ? `'${text}` : text;
+  return `"${neutralized.replaceAll('"', '""')}"`;
+}
 const publicTraceFields = new Set(["queryText", "source", "retrievedAt", "sourceTier", "sourceUrl", "locator", "lifecycle", "confidence", "dedupDecision", "eligibility", "matchExplanation", "failure", "queryCount", "sourceCount", "resultCount", "beforeScope", "afterScope"]);
 const reviewedAtsHosts = new Set(["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]);
 
@@ -135,7 +150,7 @@ export class JobSearchService {
       const id = randomUUID();
       const version = current + 1;
       const createdAt = new Date().toISOString();
-      this.database.prepare("INSERT INTO candidate_profile_versions(id, workspace_id, version, headline, skills_json, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, input.workspaceId, version, profile.headline, JSON.stringify(profile.skills), createdAt);
+      this.database.prepare("INSERT INTO candidate_profile_versions(id, workspace_id, version, headline, skills_json, targeting_constraints_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, input.workspaceId, version, profile.headline, JSON.stringify(profile.skills), JSON.stringify(profile.targetingConstraints), createdAt);
       const insertTrack = this.database.prepare("INSERT INTO positioning_tracks(id, workspace_id, profile_version_id, name, summary, target_roles_json) VALUES (?, ?, ?, ?, ?, ?)");
       for (const track of profile.positioningTracks) insertTrack.run(randomUUID(), input.workspaceId, id, track.name, track.summary, JSON.stringify(track.targetRoles));
       return { id, workspaceId: input.workspaceId, version, profile, createdAt };
@@ -165,30 +180,50 @@ export class JobSearchService {
   }
 
   async finishSearchRun(input: { workspaceId: string; runId: string; status?: "completed" | "failed" }): Promise<SearchRun> {
-    await this.getSearchRun(input);
-    const status = input.status ?? "completed";
-    this.database.prepare("UPDATE search_runs SET status = ?, finished_at = ? WHERE workspace_id = ? AND id = ?").run(status, new Date().toISOString(), input.workspaceId, input.runId);
-    return this.getSearchRun(input);
-  }
-
-  async recordSearchBatch(input: { workspaceId: string; runId: string; query?: { text: string; source: string }; opportunities: OpportunityInput[] }) {
-    await this.getSearchRun({ workspaceId: input.workspaceId, runId: input.runId });
-    const parsed = batchInputSchema.parse({ query: input.query, opportunities: input.opportunities });
-    const opportunityIds = this.transaction(() => {
-      if (parsed.query) this.database.prepare("INSERT INTO query_events(id, workspace_id, search_run_id, query_text, source, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(randomUUID(), input.workspaceId, input.runId, parsed.query.text, parsed.query.source, new Date().toISOString());
-      return [...new Set(parsed.opportunities.map((opportunity) => this.recordOpportunity(input.workspaceId, input.runId, opportunity)))];
-    });
-    return { recorded: parsed.opportunities.length, opportunities: opportunityIds.map((id) => this.readOpportunity(input.workspaceId, id)) };
-  }
-
-  async queryOpportunities(input: { workspaceId: string; kind?: Opportunity["kind"]; eligibility?: Eligibility; evidenceStatus?: EvidenceStatus; limit?: number }): Promise<Opportunity[]> {
     await this.requireWorkspace(input.workspaceId);
-    let rows = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? ORDER BY updated_at DESC, id").all(input.workspaceId) as unknown as OpportunityRow[];
+    const status = input.status ?? "completed";
+    return this.transaction(() => {
+      this.requireRunningSearchRun(input.workspaceId, input.runId);
+      const finishedAt = new Date().toISOString();
+      const result = this.database.prepare("UPDATE search_runs SET status = ?, finished_at = ? WHERE workspace_id = ? AND id = ? AND status = 'running'").run(status, finishedAt, input.workspaceId, input.runId);
+      if (result.changes !== 1) throw new Error(`Search run is closed: ${input.runId}`);
+      return this.searchRunFromRow(this.database.prepare("SELECT * FROM search_runs WHERE workspace_id = ? AND id = ?").get(input.workspaceId, input.runId) as SearchRunRow);
+    });
+  }
+
+  async recordSearchBatch(input: { workspaceId: string; runId: string; query?: z.input<typeof queryAttemptInputSchema>; opportunities: OpportunityInput[] }) {
+    await this.requireWorkspace(input.workspaceId);
+    const parsed = batchInputSchema.parse({ query: input.query, opportunities: input.opportunities });
+    const recorded = this.transaction(() => {
+      this.requireRunningSearchRun(input.workspaceId, input.runId);
+      let queryAttempt: QueryAttempt | null = null;
+      if (parsed.query) {
+        const now = new Date().toISOString();
+        const id = randomUUID();
+        const retrievedAt = parsed.query.retrievedAt ?? now;
+        const locator = parsed.query.locator ?? parsed.query.source;
+        const failure = parsed.query.failure ? { code: parsed.query.failure.code, summary: redactPublicText(parsed.query.failure.summary) } : null;
+        this.database.prepare("INSERT INTO query_events(id, workspace_id, search_run_id, query_text, source, created_at, outcome_status, retrieved_at, locator, source_tier, failure_code, failure_summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input.workspaceId, input.runId, parsed.query.text, parsed.query.source, now, parsed.query.status, retrievedAt, locator, parsed.query.sourceTier, failure?.code ?? null, failure?.summary ?? null);
+        queryAttempt = { id, runId: input.runId, text: parsed.query.text, source: parsed.query.source, status: parsed.query.status, retrievedAt, locator, sourceTier: parsed.query.sourceTier, failure };
+      }
+      const opportunityIds = [...new Set(parsed.opportunities.map((opportunity) => this.recordOpportunity(input.workspaceId, input.runId, opportunity)))];
+      return { queryAttempt, opportunityIds };
+    });
+    return { recorded: parsed.opportunities.length, query: recorded.queryAttempt ? this.publicQueryAttempt(recorded.queryAttempt) : null, opportunities: recorded.opportunityIds.map((id) => this.publicOpportunity(this.readOpportunity(input.workspaceId, id))) };
+  }
+
+  async queryOpportunities(input: { workspaceId: string; runId?: string; kind?: Opportunity["kind"]; eligibility?: Eligibility; evidenceStatus?: EvidenceStatus; limit?: number }): Promise<PublicOpportunity[]> {
+    await this.requireWorkspace(input.workspaceId);
+    if (input.runId) this.requireSearchRun(input.workspaceId, input.runId);
+    let rows = (input.runId
+      ? this.database.prepare("SELECT opportunity.* FROM opportunities AS opportunity WHERE opportunity.workspace_id = ? AND EXISTS (SELECT 1 FROM source_observations AS observation WHERE observation.workspace_id = opportunity.workspace_id AND observation.opportunity_id = opportunity.id AND observation.search_run_id = ?) ORDER BY opportunity.updated_at DESC, opportunity.id").all(input.workspaceId, input.runId)
+      : this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? ORDER BY updated_at DESC, id").all(input.workspaceId)) as unknown as OpportunityRow[];
     if (input.kind) rows = rows.filter(({ kind }) => kind === input.kind);
     if (input.eligibility) rows = rows.filter(({ eligibility }) => eligibility === input.eligibility);
-    if (input.evidenceStatus) rows = rows.filter(({ evidence_status }) => evidence_status === input.evidenceStatus);
-    if (input.limit !== undefined) rows = rows.slice(0, input.limit);
-    return rows.map((row) => this.opportunityFromRow(row));
+    let opportunities = rows.map((row) => this.opportunityFromRow(row, input.runId));
+    if (input.evidenceStatus) opportunities = opportunities.filter(({ evidenceStatus }) => evidenceStatus === input.evidenceStatus);
+    if (input.limit !== undefined) opportunities = opportunities.slice(0, input.limit);
+    return opportunities.map((opportunity) => this.publicOpportunity(opportunity));
   }
 
   async recordFeedback(input: { workspaceId: string; opportunityId: string; disposition: FeedbackDisposition; reason?: string; confirmedPreferenceSnapshot?: PreferenceSnapshotData; preferenceBaseVersion?: number | null }) {
@@ -265,10 +300,12 @@ export class JobSearchService {
   async recordTraceEvent(input: { workspaceId: string; runId?: string; traceId: string; spanId: string; parentSpanId?: string; name: string; startedAt: string; endedAt?: string; status: "unset" | "ok" | "error"; attributes: Record<string, unknown> }): Promise<TraceEvent> {
     await this.requireWorkspace(input.workspaceId);
     const parsed = traceInputSchema.parse({ runId: input.runId, traceId: input.traceId, spanId: input.spanId, parentSpanId: input.parentSpanId, name: input.name, startedAt: input.startedAt, endedAt: input.endedAt, status: input.status, attributes: input.attributes });
-    if (parsed.runId) await this.getSearchRun({ workspaceId: input.workspaceId, runId: parsed.runId });
     const event: TraceEvent = { id: randomUUID(), workspaceId: input.workspaceId, runId: parsed.runId ?? null, traceId: parsed.traceId, spanId: parsed.spanId, parentSpanId: parsed.parentSpanId ?? null, name: parsed.name, startedAt: parsed.startedAt, endedAt: parsed.endedAt ?? null, status: parsed.status, attributes: redactTraceAttributes(parsed.attributes) as Record<string, unknown> };
-    this.database.prepare("INSERT INTO trace_events(id, workspace_id, run_id, trace_id, span_id, parent_span_id, name, started_at, ended_at, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, event.workspaceId, event.runId, event.traceId, event.spanId, event.parentSpanId, event.name, event.startedAt, event.endedAt, event.status, JSON.stringify(event.attributes));
-    return event;
+    return this.transaction(() => {
+      if (parsed.runId) this.requireRunningSearchRun(input.workspaceId, parsed.runId);
+      this.database.prepare("INSERT INTO trace_events(id, workspace_id, run_id, trace_id, span_id, parent_span_id, name, started_at, ended_at, status, attributes_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(event.id, event.workspaceId, event.runId, event.traceId, event.spanId, event.parentSpanId, event.name, event.startedAt, event.endedAt, event.status, JSON.stringify(event.attributes));
+      return event;
+    });
   }
 
   async getTraceEvents(input: { workspaceId: string }): Promise<TraceEvent[]> {
@@ -307,12 +344,12 @@ export class JobSearchService {
   }
 
   private internalRecoverySnapshot(workspace: Workspace): InternalWorkspaceRecoverySnapshot {
-    const latestProfile = this.database.prepare("SELECT id, version, headline, skills_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { id: string; version: number; headline: string; skills_json: string; created_at: string } | undefined;
+    const latestProfile = this.database.prepare("SELECT id, version, headline, skills_json, targeting_constraints_json, created_at FROM candidate_profile_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { id: string; version: number; headline: string; skills_json: string; targeting_constraints_json: string | null; created_at: string } | undefined;
     const latestSearchBrief = this.database.prepare("SELECT version, data_json, created_at FROM search_brief_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
     const latestPreference = this.database.prepare("SELECT version, data_json, created_at FROM preference_snapshot_versions WHERE workspace_id = ? ORDER BY version DESC LIMIT 1").get(workspace.id) as { version: number; data_json: string; created_at: string } | undefined;
     const runs = this.database.prepare("SELECT * FROM search_runs WHERE workspace_id = ? ORDER BY started_at, id").all(workspace.id) as SearchRunRow[];
     const feedback = this.database.prepare("SELECT id, opportunity_id, disposition, preference_version, reason, created_at FROM feedback WHERE workspace_id = ? ORDER BY created_at, id").all(workspace.id) as Array<{ id: string; opportunity_id: string; disposition: FeedbackDisposition; preference_version: number | null; reason: string | null; created_at: string }>;
-    const packets = this.database.prepare("SELECT * FROM application_packets WHERE workspace_id = ? ORDER BY updated_at, id").all(workspace.id) as PacketRow[];
+    const packets = this.database.prepare("SELECT * FROM application_packets WHERE workspace_id = ? ORDER BY updated_at DESC, id DESC").all(workspace.id) as PacketRow[];
     const opportunities = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? ORDER BY updated_at DESC, id").all(workspace.id) as OpportunityRow[];
 
     return {
@@ -323,16 +360,18 @@ export class JobSearchService {
         headline: latestProfile.headline,
         skills: parseJson<string[]>(latestProfile.skills_json),
         positioningTracks: (this.database.prepare("SELECT name, summary, target_roles_json FROM positioning_tracks WHERE workspace_id = ? AND profile_version_id = ? ORDER BY id").all(workspace.id, latestProfile.id) as Array<{ name: string; summary: string; target_roles_json: string }>).map((track) => ({ name: track.name, summary: track.summary, targetRoles: parseJson<string[]>(track.target_roles_json) })),
+        targetingConstraints: this.parseTargetingConstraints(latestProfile.targeting_constraints_json),
         createdAt: latestProfile.created_at
       } : null,
-      latestSearchBrief: latestSearchBrief ? { version: latestSearchBrief.version, data: parseJson<SearchBriefData>(latestSearchBrief.data_json), createdAt: latestSearchBrief.created_at } : null,
+      latestSearchBrief: latestSearchBrief ? { version: latestSearchBrief.version, data: this.parseSearchBrief(latestSearchBrief.data_json), createdAt: latestSearchBrief.created_at } : null,
       latestPreference: latestPreference ? (() => {
         const preference = parseJson<PreferenceSnapshotData>(latestPreference.data_json);
         return { version: latestPreference.version, data: { preferredLocations: preference.preferredLocations, preferredRoles: preference.preferredRoles }, createdAt: latestPreference.created_at };
       })() : null,
       runs: runs.map((run) => ({
         ...this.searchRunFromRow(run),
-        searchBrief: parseJson<SearchBriefData>((this.database.prepare("SELECT data_json FROM search_brief_versions WHERE workspace_id = ? AND version = ?").get(workspace.id, run.search_brief_version) as { data_json: string }).data_json),
+        searchBrief: this.parseSearchBrief((this.database.prepare("SELECT data_json FROM search_brief_versions WHERE workspace_id = ? AND version = ?").get(workspace.id, run.search_brief_version) as { data_json: string }).data_json),
+        queryAttempts: (this.database.prepare("SELECT * FROM query_events WHERE workspace_id = ? AND search_run_id = ? ORDER BY created_at, rowid").all(workspace.id, run.id) as unknown as QueryAttemptRow[]).map((row) => this.queryAttemptFromRow(row)),
         summary: {
           queryCount: (this.database.prepare("SELECT COUNT(*) AS count FROM query_events WHERE workspace_id = ? AND search_run_id = ?").get(workspace.id, run.id) as { count: number }).count,
           sourceCount: (this.database.prepare("SELECT COUNT(DISTINCT source) AS count FROM query_events WHERE workspace_id = ? AND search_run_id = ?").get(workspace.id, run.id) as { count: number }).count,
@@ -385,20 +424,14 @@ export class JobSearchService {
   }
 
   private publicRecoverySnapshot(snapshot: InternalWorkspaceRecoverySnapshot): WorkspaceRecoverySnapshot {
-    const opportunities: PublicOpportunity[] = snapshot.opportunities.map((item) => ({
-      ...item,
-      company: redactPublicText(item.company), title: redactPublicText(item.title), location: redactPublicText(item.location),
-      canonicalApplyUrl: redactPublicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? redactPublicText(item.requisitionId) : null,
-      sourceObservations: item.sourceObservations.map((observation) => ({ ...observation, sourceUrl: redactPublicUrl(observation.sourceUrl) })),
-      match: item.match ? { score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [redactPublicText(key), value])), reasons: item.match.reasons.map(redactPublicText), gaps: item.match.gaps.map(redactPublicText), unknowns: item.match.unknowns.map(redactPublicText) } : null
-    }));
+    const opportunities = snapshot.opportunities.map((item) => this.publicOpportunity(item));
     return {
       workspace: { ...snapshot.workspace, name: redactPublicText(snapshot.workspace.name) },
       resumeImported: snapshot.resumeImported,
-      latestProfile: snapshot.latestProfile ? { ...snapshot.latestProfile, headline: redactPublicText(snapshot.latestProfile.headline), skills: snapshot.latestProfile.skills.map(redactPublicText), positioningTracks: snapshot.latestProfile.positioningTracks.map((track) => ({ name: redactPublicText(track.name), summary: redactPublicText(track.summary), targetRoles: track.targetRoles.map(redactPublicText) })) } : null,
-      latestSearchBrief: snapshot.latestSearchBrief ? { ...snapshot.latestSearchBrief, data: { keywords: snapshot.latestSearchBrief.data.keywords.map(redactPublicText), locations: snapshot.latestSearchBrief.data.locations.map(redactPublicText) } } : null,
+      latestProfile: snapshot.latestProfile ? { ...snapshot.latestProfile, headline: redactPublicText(snapshot.latestProfile.headline), skills: snapshot.latestProfile.skills.map(redactPublicText), positioningTracks: snapshot.latestProfile.positioningTracks.map((track) => ({ name: redactPublicText(track.name), summary: redactPublicText(track.summary), targetRoles: track.targetRoles.map(redactPublicText) })), targetingConstraints: this.publicTargetingConstraints(snapshot.latestProfile.targetingConstraints) } : null,
+      latestSearchBrief: snapshot.latestSearchBrief ? { ...snapshot.latestSearchBrief, data: { keywords: snapshot.latestSearchBrief.data.keywords.map(redactPublicText), locations: snapshot.latestSearchBrief.data.locations.map(redactPublicText), targetingConstraints: this.publicTargetingConstraints(snapshot.latestSearchBrief.data.targetingConstraints) } } : null,
       latestPreference: snapshot.latestPreference ? { ...snapshot.latestPreference, data: { preferredLocations: snapshot.latestPreference.data.preferredLocations.map(redactPublicText), preferredRoles: snapshot.latestPreference.data.preferredRoles.map(redactPublicText) } } : null,
-      runs: snapshot.runs.map((run) => ({ ...run, searchBrief: { keywords: run.searchBrief.keywords.map(redactPublicText), locations: run.searchBrief.locations.map(redactPublicText) } })),
+      runs: snapshot.runs.map((run) => ({ ...run, searchBrief: { keywords: run.searchBrief.keywords.map(redactPublicText), locations: run.searchBrief.locations.map(redactPublicText), targetingConstraints: this.publicTargetingConstraints(run.searchBrief.targetingConstraints) }, queryAttempts: run.queryAttempts.map((attempt) => this.publicQueryAttempt(attempt)) })),
       feedback: snapshot.feedback.map((item) => ({ ...item, reason: item.reason ? redactPublicText(item.reason) : null })),
       applicationPackets: snapshot.applicationPackets.map((packet) => ({ ...packet, audit: packet.audit ? { ...packet.audit, destinationUrl: redactPublicUrl(packet.audit.destinationUrl) } : null, guidance: this.applicationGuidance(packet, snapshot.opportunities.find(({ id }) => id === packet.opportunityId)), attachments: packet.attachments.map((item) => ({ ...item, name: redactPublicText(item.name), locator: item.locator ? redactPublicText(item.locator) : null })), unknowns: packet.unknowns.map(redactPublicText), fields: packet.fields.map((field) => ({ ...field, key: redactPublicText(field.key), label: redactPublicText(field.label), provenance: field.provenance ? { ...field.provenance, locator: redactPublicText(field.provenance.locator) } : null })) })),
       opportunities,
@@ -415,12 +448,23 @@ export class JobSearchService {
     };
   }
 
+  private publicOpportunity(item: Opportunity): PublicOpportunity {
+    return {
+      ...item,
+      company: redactPublicText(item.company), title: redactPublicText(item.title), location: redactPublicText(item.location),
+      canonicalApplyUrl: redactPublicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? redactPublicText(item.requisitionId) : null,
+      sourceObservations: item.sourceObservations.map((observation) => ({ ...observation, sourceUrl: redactPublicUrl(observation.sourceUrl), locator: this.publicLocator(observation.locator), conflict: observation.conflict ? { ...observation.conflict, summary: redactPublicText(observation.conflict.summary), relatedLocator: observation.conflict.relatedLocator ? this.publicLocator(observation.conflict.relatedLocator) : undefined } : null })),
+      match: item.match ? { runId: item.match.runId, score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [redactPublicText(key), value])), reasons: item.match.reasons.map(redactPublicText), gaps: item.match.gaps.map(redactPublicText), unknowns: item.match.unknowns.map(redactPublicText) } : null
+    };
+  }
+
   private recordOpportunity(workspaceId: string, runId: string, input: OpportunityInput) {
     const keys = opportunityKeys(input);
-    const matches = this.findOpportunityMatches(workspaceId, keys);
+    const { matches, matchedBy } = this.findOpportunityMatches(workspaceId, keys);
     const row = matches[0];
     const now = new Date().toISOString();
     const opportunityId = row?.id ?? randomUUID();
+    const mergedOpportunityIds = matches.slice(1).map(({ id }) => id);
     if (!row) {
       const initialEvidence = deriveEvidenceStatus([{ sourceType: input.evidence.sourceType, status: input.evidence.status }]);
       this.database.prepare("INSERT INTO opportunities(id, workspace_id, kind, company, title, location, canonical_apply_url, requisition_id, normalized_url, normalized_requisition, normalized_fallback, eligibility, evidence_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(opportunityId, workspaceId, input.kind, input.company.trim(), input.title.trim(), input.location.trim(), keys.normalizedUrl, input.requisitionId?.trim() ?? null, keys.normalizedUrl, keys.normalizedRequisition, keys.normalizedFallback, input.eligibility, initialEvidence, now, now);
@@ -429,7 +473,17 @@ export class JobSearchService {
       this.database.prepare("UPDATE opportunities SET canonical_apply_url = COALESCE(canonical_apply_url, ?), requisition_id = COALESCE(requisition_id, ?), normalized_url = COALESCE(normalized_url, ?), normalized_requisition = COALESCE(normalized_requisition, ?), updated_at = ? WHERE workspace_id = ? AND id = ?").run(keys.normalizedUrl, input.requisitionId?.trim() ?? null, keys.normalizedUrl, keys.normalizedRequisition, now, workspaceId, opportunityId);
     }
     this.registerOpportunityAliases(workspaceId, opportunityId, keys, now);
-    this.database.prepare("INSERT INTO source_observations(id, workspace_id, opportunity_id, search_run_id, source_url, source_type, status, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.evidence.sourceUrl, input.evidence.sourceType, input.evidence.status, input.evidence.observedAt ?? now);
+    const retrievedAt = input.evidence.retrievedAt ?? input.evidence.observedAt ?? now;
+    const observedAt = input.evidence.observedAt ?? retrievedAt;
+    const sourceTier = input.evidence.sourceTier ?? (input.evidence.sourceType === "official" ? "primary" : "discovery");
+    const locator = input.evidence.locator ?? input.evidence.sourceUrl;
+    const dedupeDecision: DedupeDecision = {
+      action: !row ? "created" : mergedOpportunityIds.length ? "merged" : "matched",
+      matchedBy: matchedBy ?? "none",
+      survivorOpportunityId: opportunityId,
+      mergedOpportunityIds
+    };
+    this.database.prepare("INSERT INTO source_observations(id, workspace_id, opportunity_id, search_run_id, source_url, source_type, status, observed_at, source_tier, retrieved_at, locator, confidence, deadline, conflict_json, dedupe_decision_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.evidence.sourceUrl, input.evidence.sourceType, input.evidence.status, observedAt, sourceTier, retrievedAt, locator, input.evidence.confidence, input.evidence.deadline ?? null, input.evidence.conflict ? JSON.stringify(input.evidence.conflict) : null, JSON.stringify(dedupeDecision));
     const observations = this.database.prepare("SELECT source_type, status FROM source_observations WHERE workspace_id = ? AND opportunity_id = ?").all(workspaceId, opportunityId) as unknown as Array<{ source_type: SourceObservation["sourceType"]; status: SourceObservation["status"] }>;
     this.database.prepare("UPDATE opportunities SET evidence_status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?").run(deriveEvidenceStatus(observations.map((item) => ({ sourceType: item.source_type, status: item.status }))), now, workspaceId, opportunityId);
     if (input.match) this.database.prepare("INSERT INTO match_assessments(id, workspace_id, opportunity_id, search_run_id, score, factors_json, reasons_json, gaps_json, unknowns_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.match.score, JSON.stringify(input.match.factors), JSON.stringify(input.match.reasons), JSON.stringify(input.match.gaps), JSON.stringify(input.match.unknowns), now);
@@ -444,6 +498,7 @@ export class JobSearchService {
     ];
     const matches: OpportunityRow[] = [];
     const seen = new Set<string>();
+    let matchedBy: OpportunityAliasKeyType | undefined;
     for (const [keyType, value] of orderedKeys) {
       if (!value) continue;
       const rows = this.database.prepare(`
@@ -458,10 +513,11 @@ export class JobSearchService {
         if (!seen.has(row.id)) {
           matches.push(row);
           seen.add(row.id);
+          matchedBy ??= keyType;
         }
       }
     }
-    return matches;
+    return { matches, matchedBy };
   }
 
   private registerOpportunityAliases(workspaceId: string, opportunityId: string, keys: ReturnType<typeof opportunityKeys>, createdAt: string) {
@@ -490,12 +546,17 @@ export class JobSearchService {
     return this.opportunityFromRow(row);
   }
 
-  private opportunityFromRow(row: OpportunityRow): Opportunity {
-    const observationRows = this.database.prepare("SELECT id, source_url, source_type, status, observed_at FROM source_observations WHERE workspace_id = ? AND opportunity_id = ? ORDER BY observed_at, rowid").all(row.workspace_id, row.id) as unknown as ObservationRow[];
-    const match = this.database.prepare("SELECT score, factors_json, reasons_json, gaps_json, unknowns_json FROM match_assessments WHERE workspace_id = ? AND opportunity_id = ? ORDER BY rowid DESC LIMIT 1").get(row.workspace_id, row.id) as MatchRow | undefined;
-    return { id: row.id, workspaceId: row.workspace_id, kind: row.kind, company: row.company, title: row.title, location: row.location, canonicalApplyUrl: row.canonical_apply_url, requisitionId: row.requisition_id, eligibility: row.eligibility, evidenceStatus: row.evidence_status,
-      sourceObservations: observationRows.map((item) => ({ id: item.id, sourceUrl: item.source_url, sourceType: item.source_type, status: item.status, observedAt: item.observed_at })),
-      match: match ? { score: match.score, factors: parseJson(match.factors_json), reasons: parseJson(match.reasons_json), gaps: parseJson(match.gaps_json), unknowns: parseJson(match.unknowns_json) } : null, createdAt: row.created_at, updatedAt: row.updated_at };
+  private opportunityFromRow(row: OpportunityRow, runId?: string): Opportunity {
+    const observationRows = (runId
+      ? this.database.prepare("SELECT * FROM source_observations WHERE workspace_id = ? AND opportunity_id = ? AND search_run_id = ? ORDER BY observed_at, rowid").all(row.workspace_id, row.id, runId)
+      : this.database.prepare("SELECT * FROM source_observations WHERE workspace_id = ? AND opportunity_id = ? ORDER BY observed_at, rowid").all(row.workspace_id, row.id)) as unknown as ObservationRow[];
+    const match = (runId
+      ? this.database.prepare("SELECT * FROM match_assessments WHERE workspace_id = ? AND opportunity_id = ? AND search_run_id = ? ORDER BY rowid DESC LIMIT 1").get(row.workspace_id, row.id, runId)
+      : this.database.prepare("SELECT * FROM match_assessments WHERE workspace_id = ? AND opportunity_id = ? ORDER BY rowid DESC LIMIT 1").get(row.workspace_id, row.id)) as MatchRow | undefined;
+    const evidenceStatus = runId ? deriveEvidenceStatus(observationRows.map((item) => ({ sourceType: item.source_type, status: item.status }))) : row.evidence_status;
+    return { id: row.id, workspaceId: row.workspace_id, kind: row.kind, company: row.company, title: row.title, location: row.location, canonicalApplyUrl: row.canonical_apply_url, requisitionId: row.requisition_id, eligibility: row.eligibility, evidenceStatus,
+      sourceObservations: observationRows.map((item) => ({ id: item.id, runId: item.search_run_id, sourceUrl: item.source_url, sourceType: item.source_type, sourceTier: item.source_tier ?? (item.source_type === "official" ? "primary" : "discovery"), status: item.status, observedAt: item.observed_at, retrievedAt: item.retrieved_at ?? item.observed_at, locator: item.locator ?? item.source_url, confidence: item.confidence, deadline: item.deadline, conflict: item.conflict_json ? parseJson<ObservationConflict>(item.conflict_json) : null, dedupeDecision: parseJson<DedupeDecision>(item.dedupe_decision_json) })),
+      match: match ? { runId: match.search_run_id, score: match.score, factors: parseJson(match.factors_json), reasons: parseJson(match.reasons_json), gaps: parseJson(match.gaps_json), unknowns: parseJson(match.unknowns_json) } : null, createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
   private readApplicationPacket(workspaceId: string, packetId: string): ApplicationPacket {
@@ -511,6 +572,74 @@ export class JobSearchService {
 
   private requireOpportunity(workspaceId: string, opportunityId: string) {
     if (!this.database.prepare("SELECT id FROM opportunities WHERE workspace_id = ? AND id = ?").get(workspaceId, opportunityId)) throw new Error(`Opportunity not found: ${opportunityId}`);
+  }
+
+  private requireSearchRun(workspaceId: string, runId: string) {
+    const row = this.database.prepare("SELECT * FROM search_runs WHERE workspace_id = ? AND id = ?").get(workspaceId, runId) as SearchRunRow | undefined;
+    if (!row) throw new Error(`Search run not found: ${runId}`);
+    return row;
+  }
+
+  private requireRunningSearchRun(workspaceId: string, runId: string) {
+    const row = this.requireSearchRun(workspaceId, runId);
+    if (row.status !== "running") throw new Error(`Search run is closed (${row.status}): ${runId}`);
+    return row;
+  }
+
+  private parseTargetingConstraints(value: string | null | undefined) {
+    if (!value) return safeUnknownTargetingConstraints();
+    return profileDataSchema.shape.targetingConstraints.parse(parseJson(value));
+  }
+
+  private parseSearchBrief(value: string) {
+    return searchBriefDataSchema.parse(parseJson(value));
+  }
+
+  private publicTargetingConstraints(constraints: TargetingConstraints): TargetingConstraints {
+    return {
+      ...constraints,
+      levels: constraints.levels.map(redactPublicText),
+      domains: constraints.domains.map(redactPublicText),
+      availability: constraints.availability ? redactPublicText(constraints.availability) : null,
+      workAuthorization: constraints.workAuthorization.map(redactPublicText),
+      visa: constraints.visa ? redactPublicText(constraints.visa) : null,
+      timing: constraints.timing ? redactPublicText(constraints.timing) : null,
+      hardExclusions: constraints.hardExclusions.map(redactPublicText),
+      unknowns: constraints.unknowns.map(redactPublicText),
+      contradictions: constraints.contradictions.map((item) => ({ field: redactPublicText(item.field), details: item.details.map(redactPublicText) }))
+    };
+  }
+
+  private publicLocator(value: string) {
+    try {
+      const url = new URL(value);
+      if (["http:", "https:"].includes(url.protocol)) return redactPublicUrl(value) ?? "[REDACTED]";
+    } catch { /* Locator may be a public page section or selector rather than a URL. */ }
+    return redactPublicText(value);
+  }
+
+  private queryAttemptFromRow(row: QueryAttemptRow): QueryAttempt {
+    return {
+      id: row.id,
+      runId: row.search_run_id,
+      text: row.query_text,
+      source: row.source,
+      status: row.outcome_status,
+      retrievedAt: row.retrieved_at ?? row.created_at,
+      locator: row.locator ?? row.source,
+      sourceTier: row.source_tier,
+      failure: row.failure_code && row.failure_summary ? { code: row.failure_code, summary: row.failure_summary } : null
+    };
+  }
+
+  private publicQueryAttempt(attempt: QueryAttempt): QueryAttempt {
+    return {
+      ...attempt,
+      text: redactPublicText(attempt.text),
+      source: redactPublicText(attempt.source),
+      locator: this.publicLocator(attempt.locator),
+      failure: attempt.failure ? { code: attempt.failure.code, summary: redactPublicText(attempt.failure.summary) } : null
+    };
   }
 
   private currentVersion(table: "candidate_profile_versions" | "search_brief_versions" | "preference_snapshot_versions", workspaceId: string) {

@@ -12,6 +12,6 @@
 
 Viewer 只绑定 `127.0.0.1` 的 OS 随机端口。启动 URL 使用短期一次性随机 token，交换后跳转到不可预测的 session path；path handle 与 `HttpOnly; SameSite=Strict` cookie secret 相互独立。Host、mutation Origin 和 workspace/session 均 fail closed；静态资源设置 same-origin CSP 与 `nosniff`。
 
-MCP 服务不收集账号密码或平台 secret。提交以下贡献会被拒绝：登录/账号托管、Cookie 导入或复用、绕过 robots/访问控制、CAPTCHA/MFA 绕过、隐藏抓取、自动接受同意/签名、自动发送消息/邮件，以及任何最终 submit automation。
+MCP 服务不收集账号密码或平台 secret。提交以下贡献会被拒绝：登录/账号托管、Cookie 导入或复用、绕过 robots/访问控制、CAPTCHA/MFA 绕过、隐藏抓取、自动接受任何语言的同意/条款、attestation 或电子签名、自动发送消息/邮件，以及 generic/final submit automation。Core 对这些 ATS 控件 fail closed，任何非空 `manual_only` value 都在 service/MCP 边界拒绝。
 
-依赖风险通过 Node 22.13.0 CI、production audit、CycloneDX SBOM、许可证门禁、tracked-file sensitive scan 和可复现 release package 检查。`SHA256SUMS` 只覆盖最终发布 artifacts，不代表第三方平台内容可信。
+依赖风险通过 Node 22.13.0 CI、production audit、CycloneDX SBOM、许可证门禁、tracked-file sensitive scan 和可复现 release package 检查。CI 的 `actions/checkout` 与 `actions/setup-node` 固定到经官方 v4 tag 核验的完整 commit SHA；bundle 的 repo-local transitive inputs 也必须 git tracked。`SHA256SUMS` 只覆盖最终发布 artifacts，不代表第三方平台内容可信。

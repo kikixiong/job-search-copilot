@@ -50,17 +50,44 @@ function publicTraceFields(attributes: Record<string, unknown>) {
   return fields;
 }
 
+function safeLocator(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (["http:", "https:"].includes(parsed.protocol)) return publicUrl(value) ?? "[REDACTED]";
+  } catch { /* A locator may be a page section or selector. */ }
+  return safeText(value);
+}
+
+function publicTargetingConstraints(constraints: WorkspaceRecoverySnapshot["runs"][number]["searchBrief"]["targetingConstraints"]) {
+  return {
+    schemaVersion: constraints.schemaVersion,
+    status: constraints.status,
+    targetKinds: [...constraints.targetKinds],
+    employmentTypes: [...constraints.employmentTypes],
+    levels: constraints.levels.map(safeText),
+    domains: constraints.domains.map(safeText),
+    availability: constraints.availability ? safeText(constraints.availability) : null,
+    workAuthorization: constraints.workAuthorization.map(safeText),
+    visa: constraints.visa ? safeText(constraints.visa) : null,
+    timing: constraints.timing ? safeText(constraints.timing) : null,
+    hardExclusions: constraints.hardExclusions.map(safeText),
+    breadth: constraints.breadth,
+    unknowns: constraints.unknowns.map(safeText),
+    contradictions: constraints.contradictions.map((item) => ({ field: safeText(item.field), details: item.details.map(safeText) }))
+  };
+}
+
 function viewerSnapshot(snapshot: WorkspaceRecoverySnapshot) {
   return {
     workspace: { id: snapshot.workspace.id, name: safeText(snapshot.workspace.name), createdAt: snapshot.workspace.createdAt },
     resumeImported: snapshot.resumeImported,
-    latestProfile: snapshot.latestProfile ? { version: snapshot.latestProfile.version, headline: safeText(snapshot.latestProfile.headline), skills: snapshot.latestProfile.skills.map(safeText), positioningTracks: snapshot.latestProfile.positioningTracks.map((track) => ({ name: safeText(track.name), summary: safeText(track.summary), targetRoles: track.targetRoles.map(safeText) })), createdAt: snapshot.latestProfile.createdAt } : null,
-    latestSearchBrief: snapshot.latestSearchBrief ? { version: snapshot.latestSearchBrief.version, data: { keywords: snapshot.latestSearchBrief.data.keywords.map(safeText), locations: snapshot.latestSearchBrief.data.locations.map(safeText) }, createdAt: snapshot.latestSearchBrief.createdAt } : null,
+    latestProfile: snapshot.latestProfile ? { version: snapshot.latestProfile.version, headline: safeText(snapshot.latestProfile.headline), skills: snapshot.latestProfile.skills.map(safeText), positioningTracks: snapshot.latestProfile.positioningTracks.map((track) => ({ name: safeText(track.name), summary: safeText(track.summary), targetRoles: track.targetRoles.map(safeText) })), targetingConstraints: publicTargetingConstraints(snapshot.latestProfile.targetingConstraints), createdAt: snapshot.latestProfile.createdAt } : null,
+    latestSearchBrief: snapshot.latestSearchBrief ? { version: snapshot.latestSearchBrief.version, data: { keywords: snapshot.latestSearchBrief.data.keywords.map(safeText), locations: snapshot.latestSearchBrief.data.locations.map(safeText), targetingConstraints: publicTargetingConstraints(snapshot.latestSearchBrief.data.targetingConstraints) }, createdAt: snapshot.latestSearchBrief.createdAt } : null,
     latestPreference: snapshot.latestPreference ? { version: snapshot.latestPreference.version, data: { preferredLocations: snapshot.latestPreference.data.preferredLocations.map(safeText), preferredRoles: snapshot.latestPreference.data.preferredRoles.map(safeText) }, createdAt: snapshot.latestPreference.createdAt } : null,
-    runs: snapshot.runs.map((run) => ({ id: run.id, profileVersion: run.profileVersion, searchBriefVersion: run.searchBriefVersion, preferenceVersion: run.preferenceVersion, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, searchBrief: { keywords: run.searchBrief.keywords.map(safeText), locations: run.searchBrief.locations.map(safeText) }, summary: run.summary })),
+    runs: snapshot.runs.map((run) => ({ id: run.id, profileVersion: run.profileVersion, searchBriefVersion: run.searchBriefVersion, preferenceVersion: run.preferenceVersion, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, searchBrief: { keywords: run.searchBrief.keywords.map(safeText), locations: run.searchBrief.locations.map(safeText), targetingConstraints: publicTargetingConstraints(run.searchBrief.targetingConstraints) }, queryAttempts: run.queryAttempts.map((attempt) => ({ id: attempt.id, runId: attempt.runId, text: safeText(attempt.text), source: safeText(attempt.source), status: attempt.status, retrievedAt: attempt.retrievedAt, locator: safeLocator(attempt.locator), sourceTier: attempt.sourceTier, failure: attempt.failure ? { code: attempt.failure.code, summary: safeText(attempt.failure.summary) } : null })), summary: run.summary })),
     feedback: snapshot.feedback.map((item) => ({ id: item.id, opportunityId: item.opportunityId, disposition: item.disposition, reason: item.reason ? safeText(item.reason) : null, createdAt: item.createdAt })),
     applicationPackets: snapshot.applicationPackets.map((packet) => ({ id: packet.id, opportunityId: packet.opportunityId, status: packet.status, revision: packet.revision, audit: packet.audit ? { version: packet.audit.version, retrievedAt: packet.audit.retrievedAt, destinationUrl: publicUrl(packet.audit.destinationUrl), status: packet.audit.status } : null, guidance: { mode: packet.guidance.mode, reasons: [...packet.guidance.reasons], auditVersion: packet.guidance.auditVersion }, attachments: packet.attachments.map((item) => ({ name: safeText(item.name), status: item.status, locator: item.locator ? safeText(item.locator) : null })), unknowns: packet.unknowns.map(safeText), fields: packet.fields.map((field) => ({ id: field.id, key: safeText(field.key), label: safeText(field.label), classification: field.classification, provenance: field.provenance ? { source: field.provenance.source, locator: safeText(field.provenance.locator), reviewed: field.provenance.reviewed, sensitive: field.provenance.sensitive } : null })), createdAt: packet.createdAt, updatedAt: packet.updatedAt })),
-    opportunities: snapshot.opportunities.map((item) => ({ id: item.id, kind: item.kind, company: safeText(item.company), title: safeText(item.title), location: safeText(item.location), canonicalApplyUrl: publicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? safeText(item.requisitionId) : null, eligibility: item.eligibility, evidenceStatus: item.evidenceStatus, sourceObservations: item.sourceObservations.map((observation) => ({ id: observation.id, sourceUrl: publicUrl(observation.sourceUrl), sourceType: observation.sourceType, status: observation.status, observedAt: observation.observedAt })), match: item.match ? { score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [safeText(key), value])), reasons: item.match.reasons.map(safeText), gaps: item.match.gaps.map(safeText), unknowns: item.match.unknowns.map(safeText) } : null, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    opportunities: snapshot.opportunities.map((item) => ({ id: item.id, kind: item.kind, company: safeText(item.company), title: safeText(item.title), location: safeText(item.location), canonicalApplyUrl: publicUrl(item.canonicalApplyUrl), requisitionId: item.requisitionId ? safeText(item.requisitionId) : null, eligibility: item.eligibility, evidenceStatus: item.evidenceStatus, sourceObservations: item.sourceObservations.map((observation) => ({ id: observation.id, runId: observation.runId, sourceUrl: publicUrl(observation.sourceUrl), sourceType: observation.sourceType, sourceTier: observation.sourceTier, status: observation.status, observedAt: observation.observedAt, retrievedAt: observation.retrievedAt, locator: safeLocator(observation.locator), confidence: observation.confidence, deadline: observation.deadline, conflict: observation.conflict ? { kind: observation.conflict.kind, summary: safeText(observation.conflict.summary), relatedLocator: observation.conflict.relatedLocator ? safeLocator(observation.conflict.relatedLocator) : undefined } : null, dedupeDecision: { action: observation.dedupeDecision.action, matchedBy: observation.dedupeDecision.matchedBy, survivorOpportunityId: observation.dedupeDecision.survivorOpportunityId, mergedOpportunityIds: [...observation.dedupeDecision.mergedOpportunityIds] } })), match: item.match ? { runId: item.match.runId, score: item.match.score, factors: Object.fromEntries(Object.entries(item.match.factors).map(([key, value]) => [safeText(key), value])), reasons: item.match.reasons.map(safeText), gaps: item.match.gaps.map(safeText), unknowns: item.match.unknowns.map(safeText) } : null, createdAt: item.createdAt, updatedAt: item.updatedAt })),
     trace: snapshot.trace.map((event) => ({ id: event.id, runId: event.runId, name: safeText(event.name), startedAt: event.startedAt, endedAt: event.endedAt, status: event.status, fields: publicTraceFields(event.attributes) }))
   };
 }
@@ -86,11 +113,16 @@ export function browserLaunchSpec(url: string, platform: NodeJS.Platform | strin
   return { command, args, options: { shell: false as const, detached: true, stdio: "ignore" as const } };
 }
 
-function defaultBrowserOpen(url: string) {
+export function defaultBrowserOpen(url: string, environment: NodeJS.ProcessEnv = process.env) {
   const spec = browserLaunchSpec(url);
-  const child = spawn(spec.command, spec.args, spec.options);
-  child.unref();
-  return Promise.resolve();
+  return new Promise<void>((resolveOpen, reject) => {
+    const child = spawn(spec.command, spec.args, { ...spec.options, env: environment });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolveOpen();
+    });
+  });
 }
 
 export function createViewerLauncher(options: ViewerOptions): ViewerLauncher {

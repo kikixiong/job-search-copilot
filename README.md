@@ -24,9 +24,11 @@ Skills 负责对话流程与来源纪律，Codex Web/Browser 读取允许访问�
 2. “按我已确认的定位搜索并核验当前 Top 20 岗位。”
 3. “使用 `$run-job-search-loop` 根据我的反馈重新搜索，并为选中的岗位准备申请材料。”
 
-Viewer 展示候选人定位、机会对比、全部证据/冲突、trace 与申请 packet。它可以给出受审阅的字段指导或逐字段复制 fallback，但没有最终提交、登录、消息、邮件、Cookie 导入、CAPTCHA/MFA 绕过或同意/签名能力。用户始终手动完成敏感字段和最终提交。
+Profile 与每个 SearchBrief 都持久化同一 versioned targeting contract；SearchBrief 是该 run 的完整 scope snapshot，因此重启后无需重新推断 job/internship、employment type、level、domain、availability、work authorization/visa、timing、hard exclusions 或 breadth。Viewer 展示这些真实约束、结构化 query 失败、精确 run provenance、机会对比、全部证据/冲突、trace 与申请 packet。
 
-支持最大 20 MiB 的文本型 PDF、DOCX、TXT、Markdown（`.md` / `.markdown`）简历；扫描件需先 OCR。导出支持 JSON、Markdown 和 CSV，写入对应 workspace 的 `exports/`；JSON 可显式包含脱敏 recovery snapshot。
+Viewer 可以给出受审阅的字段指导或逐字段复制 fallback，但没有最终提交、登录、消息、邮件、Cookie 导入、CAPTCHA/MFA 绕过或同意/签名能力。中英文和常见 ATS 的 consent、terms、attestation、电子签名以及 generic/final submit 控件都 fail closed；用户始终手动完成敏感字段和最终提交。
+
+支持最大 20 MiB 的文本型 PDF、DOCX、TXT、Markdown（`.md` / `.markdown`）简历；扫描件需先 OCR。DOCX 在解压前按 central-directory metadata 限制 entry 数、单 entry 与总未压缩大小，解压后再校验实际长度。导出支持 JSON、Markdown 和 CSV，写入对应 workspace 的 `exports/`；JSON 可显式包含脱敏 recovery snapshot，CSV 会中和表格公式前缀而不改变 JSON/Markdown。
 
 ## 要求与源码安装
 

@@ -1,16 +1,17 @@
 import { builtinModules } from "node:module";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { build as esbuild } from "esbuild";
+import react from "@vitejs/plugin-react";
 import { build as viteBuild } from "vite";
 
-import { createCycloneDx, createDeterministicTgz, createThirdPartyNotices, incompatibleLicenses, productionPackages } from "./release-lib.mjs";
+import { createCycloneDx, createDeterministicTgz, createThirdPartyNotices, incompatibleLicenses, isPathInside, productionPackages } from "./release-lib.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const version = "0.1.0";
@@ -46,6 +47,45 @@ export async function trackedFilesBeneath(root, scopes) {
   return output.toString("utf8").split("\0").filter(Boolean).sort((left, right) => left.localeCompare(right, "en"));
 }
 
+function isVirtualBuildId(id) {
+  return id.startsWith("\0") || id.startsWith("virtual:") || id.startsWith("/@id/") || id === "stdin" || (/^<[^<>]+>$/.test(id));
+}
+
+function cleanBuildId(id) {
+  const withoutFsPrefix = id.startsWith("/@fs/") ? id.slice(4) : id;
+  return withoutFsPrefix.replace(/[?#].*$/, "");
+}
+
+export async function validateBuildInputProvenance({ repositoryRoot: requestedRoot, inputIds }) {
+  const root = await realpath(requestedRoot);
+  const tracked = new Set((await trackedFilesBeneath(root, ["."])).map((item) => item.replaceAll("\\", "/")));
+  const rejected = [];
+  for (const inputId of [...new Set(inputIds)].sort((left, right) => left.localeCompare(right, "en"))) {
+    if (!inputId || isVirtualBuildId(inputId)) continue;
+    const cleaned = cleanBuildId(inputId);
+    const absolute = resolve(root, cleaned);
+    let canonical;
+    try {
+      canonical = await realpath(absolute);
+    } catch {
+      rejected.push(`${inputId} (missing build input)`);
+      continue;
+    }
+    if (!isPathInside(root, canonical)) {
+      rejected.push(`${inputId} (outside repository)`);
+      continue;
+    }
+    const repositoryPath = relative(root, canonical).split(sep).join("/");
+    if (repositoryPath.split("/").includes("node_modules")) continue;
+    if (!tracked.has(repositoryPath)) rejected.push(`${repositoryPath} (untracked)`);
+  }
+  if (rejected.length) throw new Error(`Release build input provenance rejected: ${rejected.join(", ")}`);
+}
+
+function gitRepositoryRoot(directory) {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: directory, encoding: "utf8" }).trim();
+}
+
 async function trackedReleasePlan() {
   const tracked = await trackedFilesBeneath(repositoryRoot, [...fixedReleaseSources, "skills", "references"]);
   const trackedSet = new Set(tracked);
@@ -79,14 +119,23 @@ export function validateReleaseEntries(entries, plannedSources, generatedOutputs
   if (unexpected.length) throw new Error(`Release entry is not in the tracked release plan or generated-output allowlist: ${unexpected.join(", ")}`);
 }
 
-export async function buildViewerAssets({ root, outDir, configFile }) {
+export async function buildViewerAssets({ root, outDir, plugins = [] }) {
   const result = await viteBuild({
-    configFile,
+    configFile: false,
     root,
+    plugins,
+    base: "./",
     publicDir: false,
     build: { outDir, emptyOutDir: true }
   });
   const builds = Array.isArray(result) ? result : [result];
+  const moduleIds = builds.flatMap((build) => build.output.flatMap((output) => output.type === "chunk"
+    ? [...Object.keys(output.modules), ...(output.facadeModuleId ? [output.facadeModuleId] : [])]
+    : [...(output.originalFileNames ?? []), ...(output.originalFileName ? [output.originalFileName] : [])]));
+  await validateBuildInputProvenance({
+    repositoryRoot: gitRepositoryRoot(root),
+    inputIds: [join(root, "index.html"), ...moduleIds]
+  });
   return [...new Set(builds.flatMap((build) => build.output.map(({ fileName }) => fileName)))]
     .sort((left, right) => left.localeCompare(right, "en"));
 }
@@ -111,7 +160,8 @@ async function buildPlugin(stage) {
   const plannedSources = await copyPlan(stage);
   await mkdir(join(stage, "dist/mcp"), { recursive: true });
   const nodeBuiltins = [...new Set(builtinModules.flatMap((name) => name.startsWith("node:") ? [name] : [name, `node:${name}`]))];
-  await esbuild({
+  const mcpBuild = await esbuild({
+    absWorkingDir: repositoryRoot,
     entryPoints: [join(repositoryRoot, "packages/mcp/src/index.ts")],
     outfile: join(stage, "dist/mcp/index.js"),
     bundle: true,
@@ -124,12 +174,14 @@ async function buildPlugin(stage) {
     sourcemap: false,
     legalComments: "eof",
     charset: "utf8",
-    logLevel: "warning"
+    logLevel: "warning",
+    metafile: true
   });
+  await validateBuildInputProvenance({ repositoryRoot, inputIds: Object.keys(mcpBuild.metafile.inputs) });
   const staticOutputs = await buildViewerAssets({
-    configFile: join(repositoryRoot, "packages/viewer/vite.config.ts"),
     root: join(repositoryRoot, "packages/viewer"),
-    outDir: join(stage, "dist/static")
+    outDir: join(stage, "dist/static"),
+    plugins: [react()]
   });
   const lock = JSON.parse(await readFile(join(repositoryRoot, "package-lock.json"), "utf8"));
   const packages = productionPackages(lock);
@@ -156,7 +208,7 @@ async function writeArtifacts(stage, generated) {
   const releaseDirectory = join(repositoryRoot, "release");
   const finalPlugin = join(releaseDirectory, "job-search-copilot");
   await mkdir(releaseDirectory, { recursive: true });
-  if (!finalPlugin.startsWith(`${releaseDirectory}/`)) throw new Error("Refusing to replace a release path outside release/.");
+  if (!isPathInside(releaseDirectory, finalPlugin)) throw new Error("Refusing to replace a release path outside release/.");
   await rm(finalPlugin, { recursive: true, force: true });
   await rename(stage, finalPlugin);
   const archive = createDeterministicTgz(generated.archiveEntries, "job-search-copilot");

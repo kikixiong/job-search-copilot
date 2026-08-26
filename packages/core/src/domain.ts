@@ -8,6 +8,61 @@ export const applicationFieldClassificationSchema = z.enum(["safe", "confirm", "
 
 const nonEmpty = z.string().trim().min(1);
 
+export const targetingConstraintStatusSchema = z.enum(["confirmed", "unknown", "contradiction"]);
+export const searchBreadthSchema = z.enum(["quick", "balanced", "deep"]);
+export const employmentTypeSchema = z.enum(["full_time", "part_time", "contract", "temporary", "internship", "apprenticeship"]);
+const targetingContradictionSchema = z.object({ field: nonEmpty, details: z.array(nonEmpty).min(1) }).strict();
+const legacyUnknownTargetingConstraints = {
+  schemaVersion: 1 as const,
+  status: "unknown" as const,
+  targetKinds: [] as Array<"job" | "internship">,
+  employmentTypes: [] as Array<z.infer<typeof employmentTypeSchema>>,
+  levels: [] as string[],
+  domains: [] as string[],
+  availability: null,
+  workAuthorization: [] as string[],
+  visa: null,
+  timing: null,
+  hardExclusions: [] as string[],
+  breadth: "balanced" as const,
+  unknowns: ["Legacy data did not record targeting constraints."],
+  contradictions: [] as Array<{ field: string; details: string[] }>
+};
+
+export const targetingConstraintsSchema = z.object({
+  schemaVersion: z.literal(1),
+  status: targetingConstraintStatusSchema,
+  targetKinds: z.array(opportunityKindSchema).max(2),
+  employmentTypes: z.array(employmentTypeSchema),
+  levels: z.array(nonEmpty),
+  domains: z.array(nonEmpty),
+  availability: nonEmpty.nullable(),
+  workAuthorization: z.array(nonEmpty),
+  visa: nonEmpty.nullable(),
+  timing: nonEmpty.nullable(),
+  hardExclusions: z.array(nonEmpty),
+  breadth: searchBreadthSchema,
+  unknowns: z.array(nonEmpty),
+  contradictions: z.array(targetingContradictionSchema)
+}).strict().superRefine((constraints, context) => {
+  if (constraints.status === "confirmed" && constraints.targetKinds.length === 0) {
+    context.addIssue({ code: "custom", message: "Confirmed targeting requires at least one target kind.", path: ["targetKinds"] });
+  }
+  if (constraints.status === "confirmed" && constraints.contradictions.length > 0) {
+    context.addIssue({ code: "custom", message: "Confirmed targeting cannot retain contradictions.", path: ["contradictions"] });
+  }
+  if (constraints.status === "unknown" && constraints.unknowns.length === 0) {
+    context.addIssue({ code: "custom", message: "Unknown targeting must identify at least one unknown.", path: ["unknowns"] });
+  }
+  if (constraints.status === "contradiction" && constraints.contradictions.length === 0) {
+    context.addIssue({ code: "custom", message: "Contradictory targeting must identify at least one contradiction.", path: ["contradictions"] });
+  }
+});
+
+export function safeUnknownTargetingConstraints() {
+  return structuredClone(legacyUnknownTargetingConstraints);
+}
+
 export const profileDataSchema = z.object({
   headline: nonEmpty,
   skills: z.array(nonEmpty),
@@ -15,12 +70,14 @@ export const profileDataSchema = z.object({
     name: nonEmpty,
     summary: nonEmpty,
     targetRoles: z.array(nonEmpty)
-  }).strict())
+  }).strict()),
+  targetingConstraints: targetingConstraintsSchema.default(safeUnknownTargetingConstraints)
 }).strict();
 
 export const searchBriefDataSchema = z.object({
   keywords: z.array(nonEmpty).min(1),
-  locations: z.array(nonEmpty)
+  locations: z.array(nonEmpty),
+  targetingConstraints: targetingConstraintsSchema.default(safeUnknownTargetingConstraints)
 }).strict();
 
 export const preferenceSnapshotDataSchema = z.object({
@@ -37,12 +94,48 @@ export const matchInputSchema = z.object({
   unknowns: z.array(z.string())
 }).strict();
 
+export const sourceTierSchema = z.enum(["primary", "official_lead", "discovery"]);
+export const sourceConfidenceSchema = z.enum(["high", "medium", "low", "unknown"]);
+export const observationConflictSchema = z.object({
+  kind: z.enum(["lifecycle", "identity", "deadline", "other"]),
+  summary: nonEmpty,
+  relatedLocator: nonEmpty.optional()
+}).strict();
+
 export const sourceObservationInputSchema = z.object({
   sourceUrl: z.url(),
   sourceType: z.enum(["official", "community"]),
+  sourceTier: sourceTierSchema.optional(),
   status: z.enum(["open", "closed", "lead"]),
-  observedAt: z.iso.datetime().optional()
+  observedAt: z.iso.datetime().optional(),
+  retrievedAt: z.iso.datetime().optional(),
+  locator: nonEmpty.optional(),
+  confidence: sourceConfidenceSchema.default("unknown"),
+  deadline: z.iso.datetime().nullable().optional(),
+  conflict: observationConflictSchema.optional()
 }).strict();
+
+export const queryOutcomeStatusSchema = z.enum(["success", "no_results", "timeout", "blocked", "limited", "missing", "error"]);
+export const queryFailureSchema = z.object({
+  code: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/),
+  summary: z.string().trim().min(1).max(500)
+}).strict();
+export const queryAttemptInputSchema = z.object({
+  text: nonEmpty,
+  source: nonEmpty,
+  status: queryOutcomeStatusSchema.default("success"),
+  retrievedAt: z.iso.datetime().optional(),
+  locator: nonEmpty.optional(),
+  sourceTier: sourceTierSchema.default("discovery"),
+  failure: queryFailureSchema.optional()
+}).strict().superRefine((attempt, context) => {
+  if (!["success", "no_results"].includes(attempt.status) && !attempt.failure) {
+    context.addIssue({ code: "custom", message: `Query outcome ${attempt.status} requires a public failure code and summary.`, path: ["failure"] });
+  }
+  if (["success", "no_results"].includes(attempt.status) && attempt.failure) {
+    context.addIssue({ code: "custom", message: `Query outcome ${attempt.status} cannot include a failure.`, path: ["failure"] });
+  }
+});
 
 export const opportunityInputSchema = z.object({
   kind: opportunityKindSchema,
@@ -64,6 +157,12 @@ export type FeedbackDisposition = z.infer<typeof feedbackDispositionSchema>;
 export type EvidenceStatus = z.infer<typeof evidenceStatusSchema>;
 export type Eligibility = z.infer<typeof eligibilitySchema>;
 export type ApplicationFieldClassification = z.infer<typeof applicationFieldClassificationSchema>;
+export type TargetingConstraints = z.infer<typeof targetingConstraintsSchema>;
+export type SourceTier = z.infer<typeof sourceTierSchema>;
+export type SourceConfidence = z.infer<typeof sourceConfidenceSchema>;
+export type ObservationConflict = z.infer<typeof observationConflictSchema>;
+export type QueryAttemptInput = z.infer<typeof queryAttemptInputSchema>;
+export type QueryOutcomeStatus = z.infer<typeof queryOutcomeStatusSchema>;
 
 export function normalizeText(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -104,12 +203,13 @@ export function deriveEvidenceStatus(observations: Array<{ sourceType: "official
   return "community_lead";
 }
 
-const manualFieldPattern = /(eeo|demographic|race|ethnicity|gender|disabilit|veteran|legal[_ -]?consent|signature|captcha|mfa|multi[_ -]?factor|final[_ -]?submit|submit[_ -]?application|application[_ -]?submit)/i;
+const manualFieldPattern = /(eeo|demographic|race|ethnicity|gender|disabilit|veteran|consent|attestation|declaration|agree.{0,24}terms|terms.{0,24}agree|electronic.{0,8}signature|e.{0,3}signature|signature|captcha|mfa|multi.{0,3}factor|submit|apply.{0,3}now)/i;
+const manualFieldChinesePattern = /(同意.{0,6}(条款|协议|声明)|接受.{0,6}(条款|协议|声明)|电子签名|电子签署|签名|签署|最终提交|确认提交|提交(?:申请|应聘|材料)?|立即申请)/u;
 const safeFieldPattern = /^(full[_ -]?name|first[_ -]?name|last[_ -]?name|email|phone|linkedin|portfolio|website|resume)$/i;
 
 export function classifyApplicationField(key: string, label: string): ApplicationFieldClassification {
-  const combined = `${key} ${label}`;
-  if (manualFieldPattern.test(combined)) return "manual_only";
+  const combined = `${key} ${label}`.normalize("NFKC").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (manualFieldPattern.test(combined) || manualFieldChinesePattern.test(combined)) return "manual_only";
   if (safeFieldPattern.test(key)) return "safe";
   return "confirm";
 }
@@ -152,7 +252,7 @@ export function redactPublicUrl(value: string | null) {
 
 function isSensitiveTracePath(path: string) {
   const semanticPath = path.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return /(email|phone|resumetext|cookie|authorization|bearer|token|applicationanswers?|(?:local|artifact|stored|file)(?:path|directory)|(?:path|directory)$)/.test(semanticPath);
+  return /(email|phone|resumetext|cookie|authorization|bearer|token|password|secret|credential|apikey|privatekey|session|applicationanswers?|(?:local|artifact|stored|file)(?:path|directory)|(?:path|directory)$)/.test(semanticPath);
 }
 
 export function redactTraceAttributes(value: unknown, key = "", parentPath = ""): unknown {

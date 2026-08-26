@@ -13,6 +13,7 @@ export type {
   Opportunity,
   PublicOpportunity,
   PublicSourceObservation,
+  QueryAttempt,
   RecoveryApplicationPacket,
   SearchRun,
   SourceObservation,
@@ -26,14 +27,20 @@ export {
   evidenceStatusSchema,
   feedbackDispositionSchema,
   matchInputSchema,
+  observationConflictSchema,
   opportunityInputSchema,
   opportunityKindSchema,
   preferenceSnapshotDataSchema,
   profileDataSchema,
+  queryAttemptInputSchema,
+  queryOutcomeStatusSchema,
   redactPublicText,
   redactPublicUrl,
   searchBriefDataSchema,
-  sourceObservationInputSchema
+  sourceConfidenceSchema,
+  sourceObservationInputSchema,
+  sourceTierSchema,
+  targetingConstraintsSchema
 } from "./domain.js";
 export type {
   ApplicationFieldClassification,
@@ -43,6 +50,11 @@ export type {
   OpportunityInput,
   PreferenceSnapshotData,
   ProfileData,
-  SearchBriefData
+  QueryAttemptInput,
+  QueryOutcomeStatus,
+  SearchBriefData,
+  SourceConfidence,
+  SourceTier,
+  TargetingConstraints
 } from "./domain.js";
 export { defaultDataRoot } from "./storage.js";

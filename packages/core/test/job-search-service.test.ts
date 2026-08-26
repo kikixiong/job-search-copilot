@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import JSZip from "jszip";
 
 import { JobSearchService, redactPublicText, redactPublicUrl } from "../src/index.js";
+import { extractDocxText } from "../src/docx.js";
+import * as serviceModule from "../src/service.js";
 import { inspectResume, storeResumeCopy } from "../src/resume.js";
 
 const syntheticRootHome = ["/ro", "ot"].join("");
@@ -186,6 +189,15 @@ test("rejects unsafe, unsupported, oversized, and empty resume inputs with actio
   });
 });
 
+test("rejects a DOCX whose central-directory metadata declares oversized expanded entries", async () => {
+  const archive = new JSZip();
+  archive.file("_rels/.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+  archive.file("word/document.xml", `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${"A".repeat(9 * 1024 * 1024)}</w:t></w:r></w:p></w:body></w:document>`);
+  const compressed = await archive.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 9 } });
+  assert.ok(compressed.length < 100 * 1024, `fixture should be highly compressed, got ${compressed.length}`);
+  await assert.rejects(extractDocxText(compressed), /expanded|uncompressed|entry.*size|DOCX.*limit/i);
+});
+
 test("enforces profile base versions and keeps completed search runs bound to their original snapshots", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Versioning" });
@@ -218,6 +230,108 @@ test("enforces profile base versions and keeps completed search runs bound to th
     assert.equal(storedRun.profileVersion, 1);
     assert.equal(storedRun.searchBriefVersion, 1);
     assert.equal(storedRun.preferenceVersion, null);
+  });
+});
+
+test("recovers confirmed internship targeting after restart and binds the exact snapshot to the search run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-targeting-recovery-"));
+  const resumePath = join(root, "synthetic-internship-resume.txt");
+  await writeFile(resumePath, "Synthetic CV: machine-learning internship candidate, available September 2026.");
+  const constraints = {
+    schemaVersion: 1,
+    status: "confirmed",
+    targetKinds: ["internship"],
+    employmentTypes: ["internship"],
+    levels: ["entry"],
+    domains: ["machine learning"],
+    availability: "2026-09",
+    workAuthorization: ["China"],
+    visa: "not required",
+    timing: "2026 autumn recruiting",
+    hardExclusions: ["unpaid"],
+    breadth: "balanced",
+    unknowns: [],
+    contradictions: []
+  };
+
+  const first = new JobSearchService({ dataRoot: root });
+  const workspace = await first.openWorkspace({ name: "Internship recovery" });
+  await first.importResume({ workspaceId: workspace.id, sourcePath: resumePath });
+  const profile = await first.commitProfile({
+    workspaceId: workspace.id,
+    baseVersion: null,
+    profile: { headline: "ML internship candidate", skills: ["Python"], positioningTracks: [], targetingConstraints: constraints } as never
+  });
+  first.close();
+
+  const restarted = new JobSearchService({ dataRoot: root });
+  try {
+    const recovered = await restarted.getWorkspaceSnapshot({ workspaceId: workspace.id });
+    assert.deepEqual(recovered.latestProfile?.targetingConstraints, constraints);
+    const run = await restarted.beginSearchRun({
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["machine learning intern"], locations: ["Shanghai"], targetingConstraints: recovered.latestProfile?.targetingConstraints } as never,
+      preferenceVersion: null
+    });
+    const afterBegin = await restarted.getWorkspaceSnapshot({ workspaceId: workspace.id });
+    assert.deepEqual(afterBegin.runs.find(({ id }) => id === run.id)?.searchBrief.targetingConstraints, constraints);
+    assert.equal(afterBegin.runs.find(({ id }) => id === run.id)?.searchBrief.targetingConstraints.status, "confirmed");
+  } finally {
+    restarted.close();
+  }
+});
+
+test("closed search runs reject every run-bound mutation and preserve scoped assessment identity", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Immutable search runs" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const first = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["first scope"], locations: [] }, preferenceVersion: null });
+    const firstBatch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: first.id,
+      opportunities: [{ kind: "job", company: "Run Scope Co", title: "Engineer", location: "Remote", canonicalApplyUrl: "https://jobs.example.test/scope/1", eligibility: "eligible", evidence: { sourceUrl: "https://jobs.example.test/scope/1", sourceType: "official", status: "open" }, match: { score: 70, factors: { scope: 70 }, reasons: ["first"], gaps: [], unknowns: [] } }]
+    });
+    await service.finishSearchRun({ workspaceId: workspace.id, runId: first.id });
+
+    await assert.rejects(service.recordSearchBatch({ workspaceId: workspace.id, runId: first.id, opportunities: [] }), /closed|running|completed/i);
+    await assert.rejects(service.finishSearchRun({ workspaceId: workspace.id, runId: first.id, status: "failed" }), /closed|running|completed/i);
+    await assert.rejects(service.recordTraceEvent({ workspaceId: workspace.id, runId: first.id, traceId: "a".repeat(32), spanId: "b".repeat(16), name: "late.trace", startedAt: "2026-01-01T00:00:00.000Z", status: "error", attributes: {} }), /closed|running|completed/i);
+
+    const second = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["second scope"], locations: [] }, preferenceVersion: null });
+    await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: second.id,
+      opportunities: [{ kind: "job", company: "Run Scope Co", title: "Engineer", location: "Remote", canonicalApplyUrl: "https://jobs.example.test/scope/1", eligibility: "eligible", evidence: { sourceUrl: "https://jobs.example.test/scope/1", sourceType: "official", status: "closed" }, match: { score: 90, factors: { scope: 90 }, reasons: ["second"], gaps: [], unknowns: [] } }]
+    });
+
+    const firstScope = await service.queryOpportunities({ workspaceId: workspace.id, runId: first.id } as never);
+    const secondScope = await service.queryOpportunities({ workspaceId: workspace.id, runId: second.id } as never);
+    assert.equal(firstScope[0].id, firstBatch.opportunities[0].id);
+    assert.deepEqual(firstScope[0].sourceObservations.map(({ runId }) => runId), [first.id]);
+    assert.equal(firstScope[0].evidenceStatus, "verified_open");
+    assert.equal(firstScope[0].match?.runId, first.id);
+    assert.deepEqual(firstScope[0].match?.reasons, ["first"]);
+    assert.deepEqual(secondScope[0].sourceObservations.map(({ runId }) => runId), [second.id]);
+    assert.equal(secondScope[0].evidenceStatus, "closed");
+    assert.equal(secondScope[0].match?.runId, second.id);
+    assert.deepEqual(secondScope[0].match?.reasons, ["second"]);
+    assert.equal((await service.queryOpportunities({ workspaceId: workspace.id, runId: first.id, evidenceStatus: "verified_open" })).length, 1);
+    assert.equal((await service.queryOpportunities({ workspaceId: workspace.id, runId: second.id, evidenceStatus: "closed" })).length, 1);
+  });
+});
+
+test("only one concurrent terminal transition can close a running search run", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Concurrent run close" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
+    const results = await Promise.allSettled([
+      service.finishSearchRun({ workspaceId: workspace.id, runId: run.id, status: "completed" }),
+      service.finishSearchRun({ workspaceId: workspace.id, runId: run.id, status: "failed" })
+    ]);
+    assert.equal(results.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(results.filter(({ status }) => status === "rejected").length, 1);
   });
 });
 
@@ -503,6 +617,27 @@ test("exports JSON, Markdown, and CSV only beneath the workspace export director
   });
 });
 
+test("neutralizes every spreadsheet formula prefix in CSV while preserving JSON and Markdown text", async () => {
+  const csvCell = (serviceModule as { csvCell?: (value: unknown) => string }).csvCell;
+  assert.equal(typeof csvCell, "function", "CSV cell sanitizer is not exported");
+  const payloads = ["=1+1", "+SUM(1,1)", "-2+3", "@SUM(1+1)", "\t=1+1", "\r=1+1", "  =1+1", "\u0001@SUM(1+1)"];
+  for (const payload of payloads) assert.equal(csvCell!(payload), `"'${payload.replaceAll('"', '""')}"`, JSON.stringify(payload));
+
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Formula export" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Analyst", skills: [], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["analyst"], locations: [] }, preferenceVersion: null });
+    await service.recordSearchBatch({ workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "=HYPERLINK(\"https://attacker.invalid\",\"Synthetic\")", title: "@SUM(1+1)", location: "Remote", eligibility: "unknown", evidence: { sourceUrl: "https://example.test/formula", sourceType: "community", status: "lead" } }] });
+    const csv = await service.exportWorkspace({ workspaceId: workspace.id, format: "csv" });
+    const json = await service.exportWorkspace({ workspaceId: workspace.id, format: "json" });
+    const markdown = await service.exportWorkspace({ workspaceId: workspace.id, format: "markdown" });
+    assert.match(await readFile(csv.path, "utf8"), /"'=HYPERLINK/);
+    assert.match(await readFile(csv.path, "utf8"), /"'@SUM/);
+    assert.match(await readFile(json.path, "utf8"), /"company": "=HYPERLINK/);
+    assert.match(await readFile(markdown.path, "utf8"), /\*\*@SUM\(1\+1\)\*\*/);
+  });
+});
+
 test("returns a redacted recovery snapshot only when a JSON export requests content", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Snapshot core" });
@@ -534,7 +669,8 @@ test("returns a redacted recovery snapshot only when a JSON export requests cont
     const exported = await service.exportWorkspace({ workspaceId: workspace.id, format: "json", includeContent: true } as never) as { snapshot?: any };
     assert.equal(exported.snapshot.workspace.id, workspace.id);
     assert.equal(exported.snapshot.latestProfile.version, 1);
-    assert.deepEqual(exported.snapshot.latestSearchBrief.data, { keywords: ["analyst"], locations: ["Remote"] });
+    assert.deepEqual({ keywords: exported.snapshot.latestSearchBrief.data.keywords, locations: exported.snapshot.latestSearchBrief.data.locations }, { keywords: ["analyst"], locations: ["Remote"] });
+    assert.equal(exported.snapshot.latestSearchBrief.data.targetingConstraints.status, "unknown");
     assert.equal(exported.snapshot.latestPreference.version, 1);
     assert.equal(exported.snapshot.runs[0].summary.queryCount, 1);
     assert.equal(exported.snapshot.feedback[0].disposition, "interested");
@@ -543,6 +679,27 @@ test("returns a redacted recovery snapshot only when a JSON export requests cont
     assert.equal(exported.snapshot.applicationPackets[0].fields[0].value, undefined);
     const serialized = JSON.stringify(exported.snapshot);
     for (const secret of ["private@example.test", "Private Cover Letter"]) assert.equal(serialized.includes(secret), false);
+  });
+});
+
+test("redacts all new query and source-provenance free text at public service boundaries", async () => {
+  await withService(async (service) => {
+    const contact = ["private", "@", "example.test"].join("");
+    const workspace = await service.openWorkspace({ name: "Public provenance redaction" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
+    const batch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      query: { text: `contact ${contact}`, source: `source ${contact}`, status: "blocked", locator: `locator ${contact}`, failure: { code: "BLOCKED", summary: `failure ${contact}` } },
+      opportunities: [{ kind: "job", company: `Company ${contact}`, title: `Engineer ${contact}`, location: `Remote ${contact}`, eligibility: "unknown", evidence: { sourceUrl: "https://example.test/jobs/1", sourceType: "official", status: "lead", locator: `section ${contact}`, conflict: { kind: "other", summary: `conflict ${contact}`, relatedLocator: `related ${contact}` } }, match: { score: 50, factors: { [`factor ${contact}`]: 50 }, reasons: [`reason ${contact}`], gaps: [`gap ${contact}`], unknowns: [`unknown ${contact}`] } }]
+    });
+
+    assert.equal(JSON.stringify(batch).includes(contact), false);
+    assert.match(JSON.stringify(batch), /\[REDACTED\]/);
+    const queried = await service.queryOpportunities({ workspaceId: workspace.id, runId: run.id });
+    assert.equal(JSON.stringify(queried).includes(contact), false);
+    assert.match(JSON.stringify(queried), /\[REDACTED\]/);
   });
 });
 
@@ -572,6 +729,34 @@ test("redacts authorization and application-answer containers including every de
     }
     assert.match(serialized, /public-metric/);
     assert.match(serialized, /\[REDACTED\]/);
+  });
+});
+
+test("redacts opaque password, secret, credential, API-key, private-key, and session subtrees before persistence", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Opaque trace credentials" });
+    await service.recordTraceEvent({
+      workspaceId: workspace.id,
+      traceId: "2af7651916cd43dd8448eb211c80319c",
+      spanId: "d7ad6b7169203331",
+      name: "search.request",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      status: "error",
+      attributes: {
+        password: "opaque-private-value",
+        nested: {
+          apiKey: "plaincredentialvalue",
+          privateKey: { material: "opaque-key-material" },
+          session: { id: "opaque-session-id", metadata: { region: "private-region" } },
+          credential: { user: "opaque-user", proof: "opaque-proof" },
+          secret: ["opaque-array-secret"]
+        },
+        safeMetric: 3
+      }
+    });
+    const serialized = JSON.stringify((await service.getTraceEvents({ workspaceId: workspace.id }))[0]);
+    for (const forbidden of ["opaque-private-value", "plaincredentialvalue", "opaque-key-material", "opaque-session-id", "private-region", "opaque-user", "opaque-proof", "opaque-array-secret"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+    assert.match(serialized, /safeMetric/);
   });
 });
 
@@ -673,6 +858,25 @@ test("classifies common application-submit key and label variants as manual-only
   });
 });
 
+test("fails closed for multilingual consent, signature, and generic final-action controls", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Multilingual manual controls" });
+    const controls = [
+      { key: "primary_action", label: "最终提交" },
+      { key: "terms", label: "同意条款" },
+      { key: "e_signature", label: "电子签名" },
+      { key: "submit", label: "Submit" },
+      { key: "attestation", label: "I agree to the terms" },
+      { key: "apply_now", label: "Apply now" }
+    ];
+    const packet = await service.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: controls.map((field) => ({ ...field, value: "" })) });
+    assert.deepEqual(packet.fields.map(({ classification }) => classification), controls.map(() => "manual_only"));
+    for (const field of controls) {
+      await assert.rejects(service.upsertApplicationPacket({ workspaceId: workspace.id, status: "draft", fields: [{ ...field, value: "must-not-persist" }] }), /manual.only|blank|手动/i);
+    }
+  });
+});
+
 test("serializes concurrent migration startup and rejects a database from a future schema version", async () => {
   const root = await mkdtemp(join(tmpdir(), "job-search-migration-lock-"));
   const databasePath = join(root, "job-search.sqlite");
@@ -708,7 +912,7 @@ test("migration clears historical manual-only values before the service can read
   first.close();
   const dirty = new DatabaseSync(join(root, "job-search.sqlite"));
   dirty.prepare("UPDATE application_fields SET value = ? WHERE packet_id = ?").run("   ", packet.id);
-  dirty.prepare("DELETE FROM schema_migrations WHERE version = 6").run();
+  dirty.prepare("DELETE FROM schema_migrations WHERE version = 8").run();
   dirty.close();
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
@@ -725,12 +929,60 @@ test("upgrades a version 2 database and backfills opportunity aliases", async ()
     CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
     INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-01-01T00:00:00.000Z'), (2, '2026-01-01T00:00:01.000Z');
     CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+    CREATE TABLE candidate_profile_versions (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      headline TEXT NOT NULL,
+      skills_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE search_runs (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      profile_version INTEGER NOT NULL,
+      search_brief_version INTEGER NOT NULL,
+      preference_version INTEGER,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+    CREATE TABLE query_events (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      search_run_id TEXT NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
+      query_text TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE opportunities (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       normalized_url TEXT,
       normalized_requisition TEXT,
       normalized_fallback TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE source_observations (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+      search_run_id TEXT NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
+      source_url TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      observed_at TEXT NOT NULL
+    );
+    CREATE TABLE match_assessments (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+      search_run_id TEXT NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
+      score REAL NOT NULL,
+      factors_json TEXT NOT NULL,
+      reasons_json TEXT NOT NULL,
+      gaps_json TEXT NOT NULL,
+      unknowns_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
     INSERT INTO workspaces(id) VALUES ('workspace-v2');
@@ -742,7 +994,7 @@ test("upgrades a version 2 database and backfills opportunity aliases", async ()
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
   const database = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 6);
+  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 8);
   assert.equal((database.prepare("SELECT COUNT(*) AS count FROM opportunity_aliases WHERE workspace_id = ? AND opportunity_id = ?").get("workspace-v2", "opportunity-v2") as { count: number }).count, 3);
   database.close();
 });

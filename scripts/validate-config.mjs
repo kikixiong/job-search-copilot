@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const root = process.cwd();
 
@@ -14,6 +15,18 @@ function requireValue(condition, message) {
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+export function validateActionPins(workflow) {
+  for (const action of ["checkout", "setup-node"]) {
+    const lines = workflow.split(/\r?\n/).filter((line) => line.includes(`uses: actions/${action}@`));
+    requireValue(lines.length > 0, `Workflow must use actions/${action}.`);
+    for (const line of lines) {
+      const reference = line.match(new RegExp(`uses:\\s+actions/${action}@([^\\s#]+)`))?.[1] ?? "";
+      requireValue(/^[0-9a-f]{40}$/.test(reference), `actions/${action} must use a full 40-character commit SHA.`);
+      requireValue(/#\s*v4\s*$/.test(line), `actions/${action} must retain the reviewed # v4 version comment.`);
+    }
+  }
 }
 
 async function jsonFiles(relativeDirectory) {
@@ -53,6 +66,7 @@ async function validate() {
   requireValue(jobSearchServer?.cwd === ".", "Job Search Copilot MCP cwd must be relative to the plugin root.");
   requireValue(Array.isArray(jobSearchServer?.args) && jobSearchServer.args.length === 1 && jobSearchServer.args[0] === "packages/mcp/dist/index.js", "Job Search Copilot MCP entry point is invalid.");
   requireValue((await stat(resolve(root, "skills"))).isDirectory(), "Skills directory is missing.");
+  validateActionPins(await readFile(resolve(root, ".github/workflows/ci.yml"), "utf8"));
 
   const fixtureFiles = await jsonFiles("fixtures");
   requireValue(fixtureFiles.length > 0, "At least one synthetic fixture is required.");
@@ -65,7 +79,9 @@ async function validate() {
   console.log(`Validated plugin configuration and ${fixtureFiles.length} synthetic fixtures.`);
 }
 
-validate().catch((error) => {
-  console.error(`Configuration validation failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  validate().catch((error) => {
+    console.error(`Configuration validation failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

@@ -2,7 +2,7 @@
 
 ## Field classes
 
-Use the packet core to classify fields. `safe` applies only to a known, user-approved identity/contact value or an existing resume/link. `confirm` covers unsupported or changeable employment facts, including salary, availability, visa/work authorization, sponsorship, and relocation. `manual_only` always includes EEO/demographic, disability, veteran, consent, signature, CAPTCHA/MFA, and final submission; do not supply values for them.
+Use the packet core to classify fields. `safe` applies only to a known, user-approved identity/contact value or an existing resume/link. `confirm` covers unsupported or changeable employment facts, including salary, availability, visa/work authorization, sponsorship, and relocation. `manual_only` always includes EEO/demographic, disability, veteran, CAPTCHA/MFA, and multilingual or generic consent, terms acceptance, attestation, electronic signature/signature, submit/apply-now, and final-submission controls; do not supply values for them. Unknown wording fails closed rather than relying on one ATS key convention.
 
 ## Browser boundary
 

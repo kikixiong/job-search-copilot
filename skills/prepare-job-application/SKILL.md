@@ -22,7 +22,7 @@ List every audited form field with a value state (`supported`, `unknown`, or nee
 
 - `safe`: only known, user-approved contact/identity values and an existing resume/link; do not fill an unknown portfolio.
 - `confirm`: salary, availability, visa/work authorization, sponsorship, relocation, and every unsupported or ambiguous job-related value. Ask before using any value.
-- `manual_only`: EEO/demographic, disability, veteran, consent, signature, CAPTCHA/MFA, and final submit. Keep values blank and tell the user to complete them personally.
+- `manual_only`: EEO/demographic, disability, veteran, CAPTCHA/MFA, plus multilingual/generic consent, terms acceptance, attestation, electronic signature/signature, submit/apply-now, and final submit. Keep values blank and tell the user to complete them personally.
 
 Use `application_packet_upsert` to save a `draft` with the reviewed field list; let the core assign classifications. Include no guessed values or sensitive answers. After the user reviews the materials and fields, call `application_packet_review` only to mark the packet ready for prefill. This records readiness, never submission.
 

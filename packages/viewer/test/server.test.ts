@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { JobSearchService } from "@kikixiong/job-search-copilot-core";
 import { browserLaunchSpec, createViewerLauncher } from "../src/index.js";
+import * as viewerModule from "../src/index.js";
 
 const syntheticRootHome = ["/ro", "ot"].join("");
 const syntheticCredentialUrl = ["https://user:pass", "@boards.greenhouse.io/synthetic/jobs/candidate@example.test"].join("");
@@ -59,6 +60,14 @@ test("builds shell-free argument-array opener specs on every supported platform"
   assert.deepEqual(browserLaunchSpec(url, "linux"), { command: "xdg-open", args: [url], options: { shell: false, detached: true, stdio: "ignore" } });
   assert.deepEqual(browserLaunchSpec(url, "win32"), { command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", url], options: { shell: false, detached: true, stdio: "ignore" } });
   assert.throws(() => browserLaunchSpec("https://example.test", "linux"), /127\.0\.0\.1|loopback|本机/i);
+});
+
+test("rejects a missing desktop opener without an uncaught child-process error", async () => {
+  const defaultBrowserOpen = (viewerModule as { defaultBrowserOpen?: (url: string, environment?: NodeJS.ProcessEnv) => Promise<void> }).defaultBrowserOpen;
+  assert.equal(typeof defaultBrowserOpen, "function", "default browser opener is not exported");
+  const url = "http://127.0.0.1:4123/?token=" + "a".repeat(64);
+  await assert.rejects(defaultBrowserOpen!(url, { ...process.env, PATH: "" }), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+  await new Promise((resolve) => setTimeout(resolve, 25));
 });
 
 test("binds an OS-selected loopback port and exchanges a one-use token for an independent path handle and cookie secret", async () => {
