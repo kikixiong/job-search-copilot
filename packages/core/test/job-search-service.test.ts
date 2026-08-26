@@ -424,7 +424,7 @@ test("rejects export and attachment writes when workspace directories are symlin
   });
 });
 
-test("merges bridged URL and requisition rows into the URL-priority survivor and reparents relations", async () => {
+test("merges bridged rows into the URL survivor and retains historical aliases for later observations", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Bridge dedup" });
     const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
@@ -457,6 +457,17 @@ test("merges bridged URL and requisition rows into the URL-priority survivor and
     assert.equal(opportunities[0].id, urlId);
     assert.equal(opportunities[0].evidenceStatus, "conflict");
     assert.equal(opportunities[0].sourceObservations.length, 3);
+
+    await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      opportunities: [{ kind: "job", company: "Bridge Co", title: "Engineer A", location: "Remote", eligibility: "eligible", evidence: { sourceUrl: "https://community.test/old-fallback", sourceType: "community", status: "lead" } }]
+    });
+    const afterOldFallback = await service.queryOpportunities({ workspaceId: workspace.id });
+    assert.equal(afterOldFallback.length, 1);
+    assert.equal(afterOldFallback[0].id, urlId);
+    assert.equal(afterOldFallback[0].sourceObservations.length, 4);
+
     const database = new DatabaseSync(service.databasePath, { readOnly: true });
     assert.equal((database.prepare("SELECT COUNT(*) AS count FROM match_assessments WHERE opportunity_id = ?").get(urlId) as { count: number }).count, 3);
     assert.equal((database.prepare("SELECT opportunity_id FROM feedback").get() as { opportunity_id: string }).opportunity_id, urlId);
@@ -517,4 +528,34 @@ test("serializes concurrent migration startup and rejects a database from a futu
   future.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(999, new Date().toISOString());
   future.close();
   assert.throws(() => new JobSearchService({ dataRoot: futureRoot }), /future|newer|unsupported/i);
+});
+
+test("upgrades a version 2 database and backfills opportunity aliases", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-v2-alias-migration-"));
+  const databasePath = join(root, "job-search.sqlite");
+  const version2 = new DatabaseSync(databasePath);
+  version2.exec(`
+    CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (1, '2026-01-01T00:00:00.000Z'), (2, '2026-01-01T00:00:01.000Z');
+    CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+    CREATE TABLE opportunities (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      normalized_url TEXT,
+      normalized_requisition TEXT,
+      normalized_fallback TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    INSERT INTO workspaces(id) VALUES ('workspace-v2');
+    INSERT INTO opportunities(id, workspace_id, normalized_url, normalized_requisition, normalized_fallback, created_at)
+    VALUES ('opportunity-v2', 'workspace-v2', 'https://jobs.test/v2', 'company-v2' || char(0) || 'r-2', 'company-v2' || char(0) || 'engineer' || char(0) || 'remote', '2026-01-01T00:00:00.000Z');
+  `);
+  version2.close();
+
+  const migrated = new JobSearchService({ dataRoot: root });
+  migrated.close();
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 3);
+  assert.equal((database.prepare("SELECT COUNT(*) AS count FROM opportunity_aliases WHERE workspace_id = ? AND opportunity_id = ?").get("workspace-v2", "opportunity-v2") as { count: number }).count, 3);
+  database.close();
 });

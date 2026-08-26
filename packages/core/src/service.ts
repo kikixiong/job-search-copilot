@@ -46,6 +46,7 @@ type MatchRow = { score: number; factors_json: string; reasons_json: string; gap
 type PacketRow = { id: string; workspace_id: string; opportunity_id: string | null; status: ApplicationPacket["status"]; created_at: string; updated_at: string };
 type FieldRow = { id: string; field_key: string; label: string; value: string; classification: ApplicationFieldClassification };
 type TraceRow = { id: string; workspace_id: string; trace_id: string; span_id: string; parent_span_id: string | null; name: string; started_at: string; ended_at: string | null; status: TraceEvent["status"]; attributes_json: string };
+type OpportunityAliasKeyType = "url" | "requisition" | "fallback";
 
 const batchInputSchema = z.object({ query: z.object({ text: z.string().trim().min(1), source: z.string().trim().min(1) }).strict().optional(), opportunities: z.array(opportunityInputSchema) }).strict();
 const applicationFieldInputSchema = z.object({ key: z.string().trim().min(1), label: z.string().trim().min(1), value: z.string() }).strict();
@@ -260,6 +261,7 @@ export class JobSearchService {
       for (const duplicate of matches.slice(1)) this.mergeOpportunityInto(workspaceId, opportunityId, duplicate.id);
       this.database.prepare("UPDATE opportunities SET canonical_apply_url = COALESCE(canonical_apply_url, ?), requisition_id = COALESCE(requisition_id, ?), normalized_url = COALESCE(normalized_url, ?), normalized_requisition = COALESCE(normalized_requisition, ?), updated_at = ? WHERE workspace_id = ? AND id = ?").run(keys.normalizedUrl, input.requisitionId?.trim() ?? null, keys.normalizedUrl, keys.normalizedRequisition, now, workspaceId, opportunityId);
     }
+    this.registerOpportunityAliases(workspaceId, opportunityId, keys, now);
     this.database.prepare("INSERT INTO source_observations(id, workspace_id, opportunity_id, search_run_id, source_url, source_type, status, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), workspaceId, opportunityId, runId, input.evidence.sourceUrl, input.evidence.sourceType, input.evidence.status, input.evidence.observedAt ?? now);
     const observations = this.database.prepare("SELECT source_type, status FROM source_observations WHERE workspace_id = ? AND opportunity_id = ?").all(workspaceId, opportunityId) as unknown as Array<{ source_type: SourceObservation["sourceType"]; status: SourceObservation["status"] }>;
     this.database.prepare("UPDATE opportunities SET evidence_status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?").run(deriveEvidenceStatus(observations.map((item) => ({ sourceType: item.source_type, status: item.status }))), now, workspaceId, opportunityId);
@@ -268,16 +270,23 @@ export class JobSearchService {
   }
 
   private findOpportunityMatches(workspaceId: string, keys: ReturnType<typeof opportunityKeys>) {
-    const orderedKeys: Array<["normalized_url" | "normalized_requisition" | "normalized_fallback", string | null]> = [
-      ["normalized_url", keys.normalizedUrl],
-      ["normalized_requisition", keys.normalizedRequisition],
-      ["normalized_fallback", keys.normalizedFallback]
+    const orderedKeys: Array<[OpportunityAliasKeyType, string | null]> = [
+      ["url", keys.normalizedUrl],
+      ["requisition", keys.normalizedRequisition],
+      ["fallback", keys.normalizedFallback]
     ];
     const matches: OpportunityRow[] = [];
     const seen = new Set<string>();
-    for (const [column, value] of orderedKeys) {
+    for (const [keyType, value] of orderedKeys) {
       if (!value) continue;
-      const rows = this.database.prepare(`SELECT * FROM opportunities WHERE workspace_id = ? AND ${column} = ? ORDER BY created_at, id`).all(workspaceId, value) as unknown as OpportunityRow[];
+      const rows = this.database.prepare(`
+        SELECT opportunity.*
+        FROM opportunity_aliases AS alias
+        JOIN opportunities AS opportunity
+          ON opportunity.workspace_id = alias.workspace_id AND opportunity.id = alias.opportunity_id
+        WHERE alias.workspace_id = ? AND alias.key_type = ? AND alias.normalized_value = ?
+        ORDER BY opportunity.created_at, opportunity.id
+      `).all(workspaceId, keyType, value) as unknown as OpportunityRow[];
       for (const row of rows) {
         if (!seen.has(row.id)) {
           matches.push(row);
@@ -288,7 +297,20 @@ export class JobSearchService {
     return matches;
   }
 
+  private registerOpportunityAliases(workspaceId: string, opportunityId: string, keys: ReturnType<typeof opportunityKeys>, createdAt: string) {
+    const aliases: Array<[OpportunityAliasKeyType, string | null]> = [
+      ["url", keys.normalizedUrl],
+      ["requisition", keys.normalizedRequisition],
+      ["fallback", keys.normalizedFallback]
+    ];
+    const insert = this.database.prepare("INSERT OR IGNORE INTO opportunity_aliases(workspace_id, key_type, normalized_value, opportunity_id, created_at) VALUES (?, ?, ?, ?, ?)");
+    for (const [keyType, value] of aliases) {
+      if (value) insert.run(workspaceId, keyType, value, opportunityId, createdAt);
+    }
+  }
+
   private mergeOpportunityInto(workspaceId: string, survivorId: string, duplicateId: string) {
+    this.database.prepare("UPDATE opportunity_aliases SET opportunity_id = ? WHERE workspace_id = ? AND opportunity_id = ?").run(survivorId, workspaceId, duplicateId);
     for (const table of ["source_observations", "match_assessments", "feedback", "application_packets"] as const) {
       this.database.prepare(`UPDATE ${table} SET opportunity_id = ? WHERE workspace_id = ? AND opportunity_id = ?`).run(survivorId, workspaceId, duplicateId);
     }

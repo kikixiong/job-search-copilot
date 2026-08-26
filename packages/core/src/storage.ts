@@ -215,6 +215,26 @@ const migrations = [
       status TEXT NOT NULL CHECK(status IN ('unset', 'ok', 'error')),
       attributes_json TEXT NOT NULL
     );
+  `,
+  `
+    CREATE TABLE opportunity_aliases (
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      key_type TEXT NOT NULL CHECK(key_type IN ('url', 'requisition', 'fallback')),
+      normalized_value TEXT NOT NULL,
+      opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(workspace_id, key_type, normalized_value)
+    );
+    CREATE INDEX opportunity_aliases_opportunity_idx ON opportunity_aliases(workspace_id, opportunity_id);
+    INSERT OR IGNORE INTO opportunity_aliases(workspace_id, key_type, normalized_value, opportunity_id, created_at)
+      SELECT workspace_id, 'url', normalized_url, id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM opportunities WHERE normalized_url IS NOT NULL ORDER BY created_at, id;
+    INSERT OR IGNORE INTO opportunity_aliases(workspace_id, key_type, normalized_value, opportunity_id, created_at)
+      SELECT workspace_id, 'requisition', normalized_requisition, id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM opportunities WHERE normalized_requisition IS NOT NULL ORDER BY created_at, id;
+    INSERT OR IGNORE INTO opportunity_aliases(workspace_id, key_type, normalized_value, opportunity_id, created_at)
+      SELECT workspace_id, 'fallback', normalized_fallback, id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM opportunities ORDER BY created_at, id;
   `
 ];
 
