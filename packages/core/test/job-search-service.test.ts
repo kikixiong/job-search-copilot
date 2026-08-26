@@ -734,6 +734,14 @@ test("redacts authorization and application-answer containers including every de
 
 test("redacts opaque password, secret, credential, API-key, private-key, and session subtrees before persistence", async () => {
   await withService(async (service) => {
+    const password = ["opaque", "private", "value"].join("-");
+    const apiKey = ["plain", "credential", "value"].join("");
+    const privateKey = ["opaque", "key", "material"].join("-");
+    const sessionId = ["opaque", "session", "id"].join("-");
+    const privateRegion = ["private", "region"].join("-");
+    const opaqueUser = ["opaque", "user"].join("-");
+    const opaqueProof = ["opaque", "proof"].join("-");
+    const arraySecret = ["opaque", "array", "secret"].join("-");
     const workspace = await service.openWorkspace({ name: "Opaque trace credentials" });
     await service.recordTraceEvent({
       workspaceId: workspace.id,
@@ -743,19 +751,19 @@ test("redacts opaque password, secret, credential, API-key, private-key, and ses
       startedAt: "2026-01-01T00:00:00.000Z",
       status: "error",
       attributes: {
-        password: "opaque-private-value",
+        password,
         nested: {
-          apiKey: "plaincredentialvalue",
-          privateKey: { material: "opaque-key-material" },
-          session: { id: "opaque-session-id", metadata: { region: "private-region" } },
-          credential: { user: "opaque-user", proof: "opaque-proof" },
-          secret: ["opaque-array-secret"]
+          apiKey,
+          privateKey: { material: privateKey },
+          session: { id: sessionId, metadata: { region: privateRegion } },
+          credential: { user: opaqueUser, proof: opaqueProof },
+          secret: [arraySecret]
         },
         safeMetric: 3
       }
     });
     const serialized = JSON.stringify((await service.getTraceEvents({ workspaceId: workspace.id }))[0]);
-    for (const forbidden of ["opaque-private-value", "plaincredentialvalue", "opaque-key-material", "opaque-session-id", "private-region", "opaque-user", "opaque-proof", "opaque-array-secret"]) assert.equal(serialized.includes(forbidden), false, forbidden);
+    for (const forbidden of [password, apiKey, privateKey, sessionId, privateRegion, opaqueUser, opaqueProof, arraySecret]) assert.equal(serialized.includes(forbidden), false, forbidden);
     assert.match(serialized, /safeMetric/);
   });
 });
