@@ -17,11 +17,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run validate:config && tsc -b --pretty false",
+    "build": "npm run validate:config && tsc -b --pretty false && npm run build:client -w @kikixiong/job-search-copilot-viewer",
     "clean": "tsc -b --clean",
-    "test": "npm run validate:config && tsx --test packages/*/test/**/*.test.ts",
+    "test": "npm run validate:config && tsx --test packages/*/test/**/*.test.ts packages/*/test/**/*.test.tsx",
     "test:core": "tsc -b packages/core --pretty false && tsx --test packages/core/test/**/*.test.ts",
-    "test:mcp": "tsc -b packages/core --pretty false && tsx --test packages/mcp/test/**/*.test.ts",
+    "test:mcp": "tsc -b packages/core packages/viewer --pretty false && tsx --test packages/mcp/test/**/*.test.ts",
+    "test:viewer": "tsc -b packages/core packages/viewer --pretty false && npm test -w @kikixiong/job-search-copilot-viewer",
     "typecheck": "tsc -b --pretty false",
     "validate:config": "node scripts/validate-config.mjs"
   },

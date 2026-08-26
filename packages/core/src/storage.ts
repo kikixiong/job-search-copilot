@@ -235,6 +235,17 @@ const migrations = [
     INSERT OR IGNORE INTO opportunity_aliases(workspace_id, key_type, normalized_value, opportunity_id, created_at)
       SELECT workspace_id, 'fallback', normalized_fallback, id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       FROM opportunities ORDER BY created_at, id;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      opportunity_id TEXT NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+      disposition TEXT NOT NULL CHECK(disposition IN ('interested', 'later', 'rejected', 'information_error', 'closed', 'applied')),
+      preference_version INTEGER,
+      created_at TEXT NOT NULL
+    );
+    ALTER TABLE feedback ADD COLUMN reason TEXT;
   `
 ];
 

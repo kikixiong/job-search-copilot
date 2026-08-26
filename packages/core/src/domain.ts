@@ -120,7 +120,7 @@ const bearerPattern = /\bBearer\s+[-A-Z0-9._~+/=]+/gi;
 
 function isSensitiveTracePath(path: string) {
   const semanticPath = path.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return /(email|phone|resumetext|cookie|authorization|bearer|token|applicationanswers?)/.test(semanticPath);
+  return /(email|phone|resumetext|cookie|authorization|bearer|token|applicationanswers?|(?:local|artifact|stored|file)(?:path|directory)|(?:path|directory)$)/.test(semanticPath);
 }
 
 export function redactTraceAttributes(value: unknown, key = "", parentPath = ""): unknown {

@@ -101,7 +101,7 @@ export function createToolRegistry({ service, viewerLauncher }: ToolRegistryOpti
     {
       name: "feedback_record",
       description: "Record a disposition and optionally commit an explicitly confirmed preference snapshot.",
-      schema: z.object({ workspaceId, opportunityId: z.uuid(), disposition: feedbackDispositionSchema, confirmedPreferenceSnapshot: preferenceSnapshotDataSchema.optional(), preferenceBaseVersion: z.number().int().positive().nullable().optional() }).strict(),
+      schema: z.object({ workspaceId, opportunityId: z.uuid(), disposition: feedbackDispositionSchema, reason: z.string().trim().min(1).max(1000).optional(), confirmedPreferenceSnapshot: preferenceSnapshotDataSchema.optional(), preferenceBaseVersion: z.number().int().positive().nullable().optional() }).strict(),
       handle: (input: Parameters<JobSearchService["recordFeedback"]>[0]) => service.recordFeedback(input)
     },
     {

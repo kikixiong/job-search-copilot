@@ -298,6 +298,30 @@ test("updates preferences only from confirmed eligible feedback with the matchin
   });
 });
 
+test("persists an optional feedback reason and exposes a redacted snapshot without creating an export", async () => {
+  await withService(async (service) => {
+    const workspace = await service.openWorkspace({ name: "Viewer feedback" });
+    const profile = await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "Security Engineer", skills: ["TypeScript"], positioningTracks: [] } });
+    const run = await service.beginSearchRun({ workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["security"], locations: ["Remote"] }, preferenceVersion: null });
+    const batch = await service.recordSearchBatch({
+      workspaceId: workspace.id,
+      runId: run.id,
+      opportunities: [{ kind: "job", company: "Synthetic Security", title: "Engineer", location: "Remote", eligibility: "eligible", evidence: { sourceUrl: "https://example.test/jobs/1", sourceType: "official", status: "open" } }]
+    });
+
+    const feedback = await service.recordFeedback({ workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "rejected", reason: "岗位方向不匹配" });
+    assert.equal(feedback.reason, "岗位方向不匹配");
+    assert.equal(feedback.preferenceVersion, null);
+
+    const snapshot = await service.getWorkspaceSnapshot({ workspaceId: workspace.id });
+    assert.equal(snapshot.feedback[0].reason, "岗位方向不匹配");
+    assert.equal(snapshot.opportunities[0].sourceObservations[0].sourceType, "official");
+    assert.equal(snapshot.opportunities[0].match, null);
+    assert.deepEqual(snapshot.trace, []);
+    assert.equal(snapshot.latestPreference, null);
+  });
+});
+
 test("classifies sensitive application fields and rejects any submitted packet status", async () => {
   await withService(async (service) => {
     const workspace = await service.openWorkspace({ name: "Packets" });
@@ -348,13 +372,14 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
         resumeText: "private resume contents",
         cookie: "session=abc",
         accessToken: "secret-token",
-        applicationAnswerBody: "private answer"
+        applicationAnswerBody: "private answer",
+        artifactPath: "/tmp/private-artifact.txt"
       }
     });
     assert.equal(event.name, "application.packet.review");
     const persisted = await service.getTraceEvents({ workspaceId: workspace.id });
     const serialized = JSON.stringify(persisted[0]);
-    for (const secret of ["person@example.com", "backup@example.org", "415-555-2671", "private resume contents", "session=abc", "secret-token", "private answer"]) {
+    for (const secret of ["person@example.com", "backup@example.org", "415-555-2671", "private resume contents", "session=abc", "secret-token", "private answer", "/tmp/private-artifact.txt"]) {
       assert.equal(serialized.includes(secret), false);
     }
     assert.match(serialized, /\[REDACTED\]/);
@@ -598,7 +623,7 @@ test("upgrades a version 2 database and backfills opportunity aliases", async ()
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
   const database = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 3);
+  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 4);
   assert.equal((database.prepare("SELECT COUNT(*) AS count FROM opportunity_aliases WHERE workspace_id = ? AND opportunity_id = ?").get("workspace-v2", "opportunity-v2") as { count: number }).count, 3);
   database.close();
 });

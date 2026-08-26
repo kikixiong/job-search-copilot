@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { JobSearchService } from "@kikixiong/job-search-copilot-core";
+import { createViewerLauncher } from "@kikixiong/job-search-copilot-viewer";
 import { createToolRegistry, TOOL_NAMES } from "../src/tools.js";
 
 const expectedTools = [
@@ -162,4 +163,35 @@ test("viewer_open reports unavailable without Task 4 and refuses non-loopback la
   } finally {
     service.close();
   }
+});
+
+test("viewer_open starts the real loopback launcher through an in-memory handler", async () => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-real-viewer-"));
+  const service = new JobSearchService({ dataRoot });
+  let opened = "";
+  const viewerLauncher = createViewerLauncher({ service, openBrowser: async (url) => { opened = url; } });
+  try {
+    const workspace = await service.openWorkspace({ name: "Real Viewer" });
+    const result = await createToolRegistry({ service, viewerLauncher }).invoke("viewer_open", { workspaceId: workspace.id });
+    assert.equal(result.available, true);
+    assert.equal(opened, result.url);
+    assert.equal(new URL(result.url).hostname, "127.0.0.1");
+    assert.equal(new URL(result.url).protocol, "http:");
+  } finally {
+    await viewerLauncher.close();
+    service.close();
+  }
+});
+
+test("feedback_record preserves an optional reason without changing the twelve-tool contract", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "Reason MCP" });
+    const profile = await registry.invoke("profile_commit", { workspaceId: workspace.id, baseVersion: null, profile: { headline: "Engineer", skills: [], positioningTracks: [] } });
+    const run = await registry.invoke("search_run_begin", { workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["engineer"], locations: [] }, preferenceVersion: null });
+    const batch = await registry.invoke("search_record_batch", { workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "Synthetic", title: "Engineer", location: "Remote", eligibility: "unknown", evidence: { sourceUrl: "https://example.test/job", sourceType: "community", status: "lead" } }] });
+    const feedback = await registry.invoke("feedback_record", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "information_error", reason: "来源信息不准确" });
+    assert.equal(feedback.reason, "来源信息不准确");
+    assert.equal(feedback.preferenceVersion, null);
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  });
 });
