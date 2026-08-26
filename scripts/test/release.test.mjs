@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { gunzipSync } from "node:zlib";
-import { dirname, resolve } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -86,17 +88,39 @@ test("license gate parses SPDX conjunctions, choices, and exceptions for a stati
   ]).map(({ name }) => name), ["epl", "gpl", "lgpl", "unknown"]);
 });
 
-test("third-party notices reproduce Mammoth's BSD copyright, conditions, and disclaimer", async () => {
+test("third-party notices reproduce BSD copyright, conditions, and disclaimer", async () => {
   const { createThirdPartyNotices } = await releaseModule();
   assert.equal(typeof createThirdPartyNotices, "function", "third-party notice collection is not implemented");
   const notices = await createThirdPartyNotices(repositoryRoot, [{
-    name: "mammoth",
-    version: "1.12.1",
+    name: "json-schema-typed",
+    version: "8.0.2",
     license: "BSD-2-Clause",
-    lockPath: "node_modules/mammoth"
+    lockPath: "node_modules/json-schema-typed"
   }]);
 
-  assert.match(notices, /Copyright \(c\) 2013, Michael Williamson/);
+  assert.match(notices, /Original source code is copyright \(c\) 2019-2025 Remy Rylan/);
   assert.match(notices, /Redistributions in binary form must reproduce/);
   assert.match(notices, /THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"/);
+});
+
+test("third-party notice generation rejects unresolved license template placeholders", async () => {
+  const { createThirdPartyNotices } = await releaseModule();
+  const root = await mkdtemp(join(tmpdir(), "job-search-license-fallback-"));
+  try {
+    await mkdir(join(root, "node_modules/no-license"), { recursive: true });
+    await writeFile(join(root, "node_modules/no-license/package.json"), JSON.stringify({
+      name: "no-license",
+      version: "1.0.0",
+      author: "Synthetic Author",
+      license: "BSD-2-Clause"
+    }));
+    await assert.rejects(createThirdPartyNotices(root, [{
+      name: "no-license",
+      version: "1.0.0",
+      license: "BSD-2-Clause",
+      lockPath: "node_modules/no-license"
+    }]), /unresolved license template placeholder/i);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

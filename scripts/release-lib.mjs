@@ -154,6 +154,12 @@ function fallbackLicenseText(expression) {
   return texts.join("\n\n");
 }
 
+function assertNoLicenseTemplatePlaceholders(text, packageId) {
+  if (/<(?:year|owner|copyright holders?)>/i.test(text)) {
+    throw new Error(`Unresolved license template placeholder for ${packageId}. Add reviewed upstream material or remove the dependency.`);
+  }
+}
+
 function readmeLicenseSection(readme) {
   const match = readme.match(/^#{1,3}\s+licen[cs]e\s*$([\s\S]*)/im);
   return match && /(?:Permission is hereby granted|Redistribution and use|Licensed under)/i.test(match[1]) ? match[0].trim() : "";
@@ -176,6 +182,7 @@ export async function createThirdPartyNotices(repositoryRoot, packages) {
       const readmeSection = readmeName ? readmeLicenseSection(await readFile(resolve(packageDirectory, readmeName), "utf8")) : "";
       const fallback = readmeSection || fallbackLicenseText(item.license);
       if (!fallback) throw new Error(`No distributable license text found for ${item.name}@${item.version} (${item.license}).`);
+      assertNoLicenseTemplatePlaceholders(fallback, `${item.name}@${item.version}`);
       materials.push(readmeSection ? `[${readmeName} license section]\n${readmeSection}` : `[SPDX fallback; upstream package supplied no license file]\n${fallback}`);
     }
     sections.push([

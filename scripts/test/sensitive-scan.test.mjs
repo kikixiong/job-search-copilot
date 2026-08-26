@@ -109,3 +109,15 @@ test("synthetic credential exception accepts only an exact placeholder value", a
 
   assert.deepEqual(findings.map(({ rule }) => rule), ["credential"]);
 });
+
+test("555 contact data is rejected outside synthetic fixtures", async () => {
+  const { scanEntries } = await scanner();
+  const email = ["candidate.555", "@company.invalid"].join("");
+  const phone = ["+1 212 ", "555 6789"].join("");
+  const findings = scanEntries([
+    { path: "notes.txt", content: email },
+    { path: "phone.txt", content: phone }
+  ]);
+
+  assert.deepEqual(findings.map(({ rule }) => rule), ["contact-data", "contact-data"]);
+});

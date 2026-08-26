@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -61,6 +61,7 @@ test("release archive validation rejects entries outside tracked sources and gen
   const { validateReleaseEntries } = await packager();
   assert.equal(typeof validateReleaseEntries, "function", "archive allowlist validation is not implemented");
   const planned = ["skills/example/SKILL.md", "README.md"];
+  const generated = ["dist/static/index.html"];
   assert.doesNotThrow(() => validateReleaseEntries([
     "skills/example/SKILL.md",
     "README.md",
@@ -69,6 +70,33 @@ test("release archive validation rejects entries outside tracked sources and gen
     "dist/static/index.html",
     "SBOM.cdx.json",
     "THIRD_PARTY_LICENSES.md"
-  ], planned));
-  assert.throws(() => validateReleaseEntries([...planned, "skills/example/private-note.txt"], planned), /not in the tracked release plan/i);
+  ], planned, generated));
+  assert.throws(() => validateReleaseEntries([...planned, "skills/example/private-note.txt"], planned, generated), /not in the tracked release plan/i);
+  assert.throws(() => validateReleaseEntries([...planned, ...generated, "dist/static/private-note.txt"], planned, generated), /not in the tracked release plan/i);
+});
+
+test("release Viewer build ignores an untracked public sentinel and reports only emitted assets", async () => {
+  const { buildViewerAssets } = await packager();
+  assert.equal(typeof buildViewerAssets, "function", "release Viewer asset builder is not implemented");
+  const root = await mkdtemp(join(tmpdir(), "job-search-viewer-release-"));
+  const viewerRoot = join(root, "packages/viewer");
+  const output = join(root, "stage/dist/static");
+  try {
+    await mkdir(join(viewerRoot, "src"), { recursive: true });
+    await mkdir(join(viewerRoot, "public"));
+    await writeFile(join(viewerRoot, "index.html"), '<script type="module" src="/src/main.js"></script>\n');
+    await writeFile(join(viewerRoot, "src/main.js"), 'document.body.textContent = "tracked-viewer-asset";\n');
+    await writeFile(join(viewerRoot, "public/private-note.txt"), "private-release-sentinel\n");
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "packages/viewer/index.html", "packages/viewer/src/main.js"], { cwd: root });
+
+    const emitted = await buildViewerAssets({ root: viewerRoot, outDir: output, configFile: false });
+    assert.ok(emitted.includes("index.html"));
+    assert.ok(emitted.some((path) => path.startsWith("assets/") && path.endsWith(".js")));
+    assert.match(await readFile(join(output, emitted.find((path) => path.endsWith(".js"))), "utf8"), /tracked-viewer-asset/);
+    await assert.rejects(readFile(join(output, "private-note.txt")), /ENOENT/);
+    assert.equal(emitted.includes("private-note.txt"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -36,7 +36,7 @@ export function scanEntries(entries, { allowTestFixtures = true } = {}) {
     if (privateKey.test(content)) findings.push({ path, rule: "private-key", message: "检测到私钥块。" });
     if (personalUnixHome.test(content) || personalWindowsHome.test(content)) findings.push({ path, rule: "personal-home-path", message: "检测到个人主目录绝对路径。" });
     if (likelyCredential.test(credentialContent)) findings.push({ path, rule: "credential", message: "检测到疑似 cookie、token 或 API key。" });
-    if ([...content.matchAll(contactData)].some((match) => !/\b555\b/.test(match[0]))) {
+    if ([...content.matchAll(contactData)].length > 0) {
       findings.push({ path, rule: "contact-data", message: "检测到非合成联系方式。" });
     }
   }

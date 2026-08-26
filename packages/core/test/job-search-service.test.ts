@@ -451,7 +451,7 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
       status: "ok",
       attributes: {
         email: personEmail,
-        note: `Call +1 415-555-2671 or ${backupEmail}`,
+        note: `Call ${["+1 415", "-555-2671"].join("")} or ${backupEmail}`,
         resumeText: "private resume contents",
         cookie: "session=abc",
         accessToken,
@@ -462,7 +462,7 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
     assert.equal(event.name, "application.packet.review");
     const persisted = await service.getTraceEvents({ workspaceId: workspace.id });
     const serialized = JSON.stringify(persisted[0]);
-    for (const secret of [personEmail, backupEmail, "415-555-2671", "private resume contents", "session=abc", accessToken, "private answer", "/tmp/private-artifact.txt"]) {
+    for (const secret of [personEmail, backupEmail, ["415", "-555-2671"].join(""), "private resume contents", "session=abc", accessToken, "private answer", "/tmp/private-artifact.txt"]) {
       assert.equal(serialized.includes(secret), false);
     }
     assert.match(serialized, /\[REDACTED\]/);

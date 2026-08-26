@@ -12,7 +12,8 @@
     }
   },
   "dependencies": {
-    "mammoth": "^1.12.1",
+    "@xmldom/xmldom": "^0.8.15",
+    "jszip": "^3.10.1",
     "pdf2json": "^4.0.3",
     "zod": "^4.4.3"
   }

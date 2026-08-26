@@ -66,15 +66,29 @@ async function copyPlan(stage) {
   return plan.map(({ destination }) => destination);
 }
 
-export function validateReleaseEntries(entries, plannedSources) {
+export function validateReleaseEntries(entries, plannedSources, generatedOutputs = []) {
   const sources = new Set(plannedSources);
-  const generated = (path) => path === ".mcp.json"
-    || path === "dist/mcp/index.js"
-    || path.startsWith("dist/static/")
-    || path === "SBOM.cdx.json"
-    || path === "THIRD_PARTY_LICENSES.md";
-  const unexpected = entries.filter((path) => !sources.has(path) && !generated(path));
+  const generated = new Set([
+    ".mcp.json",
+    "dist/mcp/index.js",
+    "SBOM.cdx.json",
+    "THIRD_PARTY_LICENSES.md",
+    ...generatedOutputs
+  ]);
+  const unexpected = entries.filter((path) => !sources.has(path) && !generated.has(path));
   if (unexpected.length) throw new Error(`Release entry is not in the tracked release plan or generated-output allowlist: ${unexpected.join(", ")}`);
+}
+
+export async function buildViewerAssets({ root, outDir, configFile }) {
+  const result = await viteBuild({
+    configFile,
+    root,
+    publicDir: false,
+    build: { outDir, emptyOutDir: true }
+  });
+  const builds = Array.isArray(result) ? result : [result];
+  return [...new Set(builds.flatMap((build) => build.output.map(({ fileName }) => fileName)))]
+    .sort((left, right) => left.localeCompare(right, "en"));
 }
 
 async function filesBeneath(directory) {
@@ -112,10 +126,10 @@ async function buildPlugin(stage) {
     charset: "utf8",
     logLevel: "warning"
   });
-  await viteBuild({
+  const staticOutputs = await buildViewerAssets({
     configFile: join(repositoryRoot, "packages/viewer/vite.config.ts"),
     root: join(repositoryRoot, "packages/viewer"),
-    build: { outDir: join(stage, "dist/static"), emptyOutDir: true }
+    outDir: join(stage, "dist/static")
   });
   const lock = JSON.parse(await readFile(join(repositoryRoot, "package-lock.json"), "utf8"));
   const packages = productionPackages(lock);
@@ -126,7 +140,11 @@ async function buildPlugin(stage) {
   await writeFile(join(stage, "SBOM.cdx.json"), sbom);
   await writeFile(join(stage, "THIRD_PARTY_LICENSES.md"), licenseReport);
   const archiveEntries = await filesBeneath(stage);
-  validateReleaseEntries(archiveEntries.map(({ path }) => path), plannedSources);
+  validateReleaseEntries(
+    archiveEntries.map(({ path }) => path),
+    plannedSources,
+    staticOutputs.map((path) => `dist/static/${path}`)
+  );
   return { sbom, licenseReport, archiveEntries };
 }
 

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
-import * as mammoth from "mammoth";
 import PDFParser from "pdf2json";
 
+import { extractDocxText } from "./docx.js";
 import { writeGeneratedFile } from "./storage.js";
 
 const MAX_RESUME_BYTES = 20 * 1024 * 1024;
@@ -28,8 +28,7 @@ async function extractPdf(contents: Buffer) {
 async function extractText(extension: string, contents: Buffer) {
   if (extension === ".txt" || extension === ".md" || extension === ".markdown") return contents.toString("utf8");
   if (extension === ".pdf") return extractPdf(contents);
-  const result = await mammoth.extractRawText({ buffer: contents });
-  return result.value;
+  return extractDocxText(contents);
 }
 
 export async function inspectResume(sourcePath: string) {
