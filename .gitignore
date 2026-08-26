@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.DS_Store
+*.log
+.superpowers/
+.job-search-copilot/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
