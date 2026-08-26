@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Job Opportunities"
+  short_description: "Verify evidence-backed job opportunities"
+  default_prompt: "Use $research-job-opportunities to find and verify jobs that match my confirmed profile."
