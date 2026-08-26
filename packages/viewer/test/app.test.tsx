@@ -81,6 +81,13 @@ test("renders confirmed targeting, structured query failures, and complete sourc
   assert.ok(screen.getByText(/https:\/\/boards\.example\.test\/jobs/));
 });
 
+test("labels every displayed match score with its assessment run identity", () => {
+  render(<ViewerApp initialSnapshot={populatedSnapshot} />);
+  const opportunity = screen.getByRole("button", { name: /Product Engineer/ });
+  assert.ok(opportunity.textContent?.includes("91"));
+  assert.ok(opportunity.textContent?.includes("run 20000000-0000-4000-8000-000000000000"));
+});
+
 test("supports mobile/reduced-motion state, named keyboard controls, and click-only clipboard feedback", async () => {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
   const writes: string[] = [];

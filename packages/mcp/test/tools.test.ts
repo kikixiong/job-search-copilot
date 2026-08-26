@@ -82,6 +82,67 @@ test("runs a representative workspace-profile-search-opportunity vertical path t
   });
 });
 
+test("search_record_batch keeps a rediscovered survivor scoped to the current run", async () => {
+  await withRegistry(async (registry) => {
+    const workspace = await registry.invoke("workspace_open", { name: "Batch run scope" });
+    const profile = await registry.invoke("profile_commit", {
+      workspaceId: workspace.id,
+      baseVersion: null,
+      profile: { headline: "Engineer", skills: ["TypeScript"], positioningTracks: [] }
+    });
+    const runA = await registry.invoke("search_run_begin", {
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["engineer A"], locations: ["Remote"] },
+      preferenceVersion: null
+    });
+    await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: runA.id,
+      opportunities: [{
+        kind: "job",
+        company: "Scoped Synthetic",
+        title: "Engineer",
+        location: "Remote",
+        canonicalApplyUrl: "https://jobs.example.test/scoped-survivor",
+        eligibility: "eligible",
+        evidence: { sourceUrl: "https://jobs.example.test/scoped-survivor", sourceType: "official", status: "open" },
+        match: { score: 99, factors: { skills: 99 }, reasons: ["run A only"], gaps: [], unknowns: [] }
+      }]
+    });
+    await registry.invoke("search_run_finish", { workspaceId: workspace.id, runId: runA.id });
+
+    const runB = await registry.invoke("search_run_begin", {
+      workspaceId: workspace.id,
+      profileVersion: profile.version,
+      searchBrief: { keywords: ["engineer B"], locations: ["Remote"] },
+      preferenceVersion: null
+    });
+    const batchB = await registry.invoke("search_record_batch", {
+      workspaceId: workspace.id,
+      runId: runB.id,
+      opportunities: [{
+        kind: "job",
+        company: "Scoped Synthetic",
+        title: "Engineer",
+        location: "Remote",
+        canonicalApplyUrl: "https://jobs.example.test/scoped-survivor",
+        eligibility: "eligible",
+        evidence: { sourceUrl: "https://community.example.test/scoped-survivor", sourceType: "community", status: "lead" }
+      }]
+    });
+
+    assert.equal(batchB.opportunities[0].evidenceStatus, "community_lead");
+    assert.deepEqual(batchB.opportunities[0].sourceObservations.map((observation: { runId: string }) => observation.runId), [runB.id]);
+    assert.equal(batchB.opportunities[0].match, null);
+    const scopedB = await registry.invoke("opportunities_query", { workspaceId: workspace.id, runId: runB.id });
+    assert.equal(scopedB[0].evidenceStatus, "community_lead");
+    assert.deepEqual(scopedB[0].sourceObservations.map((observation: { runId: string }) => observation.runId), [runB.id]);
+    assert.equal(scopedB[0].match, null);
+    assert.deepEqual(TOOL_NAMES, expectedTools);
+  });
+});
+
 test("persists structured source failures and exact-run provenance through MCP recovery and Viewer", async () => {
   const dataRoot = await mkdtemp(join(tmpdir(), "job-search-mcp-provenance-"));
   const service = new JobSearchService({ dataRoot });

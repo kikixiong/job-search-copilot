@@ -24,9 +24,9 @@ flowchart LR
 
 Candidate profile、SearchBrief 与 preference 使用单调版本。两处定位都使用同一个严格、version-1 `TargetingConstraints` contract：Profile 保存最新可复用的定位事实；SearchBrief 保存该 run 的完整不可变 snapshot（target kind、employment type、level、domain、availability、work authorization/visa、timing、hard exclusions、breadth、unknowns/contradictions）。`confirmed`、`unknown`、`contradiction` 各有状态一致性校验；旧记录安全迁移为显式 unknown/default，不重新推断。Viewer 与 recovery 显示真实 snapshot。
 
-Search run 固定绑定启动时的 profile/SearchBrief/preference 版本，状态只能从 `running` 单向进入 `completed` 或 `failed`。关闭后所有 batch、finish 重试与 run-bound trace 都在事务内拒绝。SQLite migrations 顺序记录在 `schema_migrations`；数据库版本高于当前程序时拒绝打开。
+Search run 固定绑定启动时的 profile/SearchBrief/preference 版本，状态只能从 `running` 单向进入 `completed` 或 `failed`。关闭后所有 batch、finish 重试与 run-bound trace 都在事务内拒绝。SQLite migrations 顺序记录在 `schema_migrations`；当前 schema version 9 会用当前字段分类器重新检查全部历史 application fields、清空新分类为 `manual_only` 的值并保留稳定 ID，数据库版本高于当前程序时拒绝打开。
 
-Opportunity 通过 canonical URL、requisition ID 与保守 fallback key 去重，并保留历史 alias。每个 query attempt、source observation、match assessment 与 dedupe decision 都持久化精确 `runId`；query 还保留结构化 outcome/failure，observation 保留 exact locator、tier、confidence、deadline、retrieved-at 与 conflict。`opportunities_query.runId` 按历史 run 重算证据状态并返回该 run 的 assessment identity，不把新旧 scope 混合。Recovery snapshot 公开完整可恢复失败与来源 provenance，但不含简历全文、原始 application values、凭据或本机路径。
+Opportunity 通过 canonical URL、requisition ID 与保守 fallback key 去重，并保留历史 alias。每个 query attempt、source observation、match assessment 与 dedupe decision 都持久化精确 `runId`；query 还保留结构化 outcome/failure，observation 保留 exact locator、tier、confidence、deadline、retrieved-at 与 conflict。`search_record_batch` 的 survivor response 与 `opportunities_query.runId` 都只投影当前/指定 run 的 observations、证据状态和 assessment identity，不把新旧 scope 混合；Viewer 若展示跨 run 总览分数，会在分数旁明确显示 assessment `runId`。Recovery snapshot 公开完整可恢复失败与来源 provenance，但不含简历全文、原始 application values、凭据或本机路径。
 
 Trace 仅保留用户可见的动作证据，不保存 hidden reasoning。任意嵌套 `password`、`secret`、`credential`、`apiKey`、`privateKey`、`session` 子树在持久化前清除；敏感字符串、联系方式、token、URL 和本机路径在公共 recovery/Viewer 边界再次脱敏。
 

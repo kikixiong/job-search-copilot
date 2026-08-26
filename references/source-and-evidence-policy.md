@@ -8,7 +8,7 @@
 | Official lead | Other company-owned public source | `official_lead` unless it confirms current opening |
 | Discovery | Public index, recruiter/social/community content, or user-provided social material | `community_lead` |
 
-For each observation retain its run ID, URL, source tier, retrieved-at time, exact page/section or screenshot locator, lifecycle (`open`, `closed`, or `lead`), confidence, deadline if stated, canonical apply URL, conflict metadata, and auditable dedupe decision. A primary closed observation is `closed`; contradictory primary observations are `conflict`. Do not infer an opening from stale listings or visibility on a social platform.
+For each observation retain its run ID, URL, source tier, retrieved-at time, exact page/section or screenshot locator, lifecycle (`open`, `closed`, or `lead`), confidence, deadline if stated, canonical apply URL, conflict metadata, and auditable dedupe decision. A primary closed observation is `closed`; contradictory primary observations are `conflict`. A batch response for a deduplicated survivor contains only that batch run's observations, derived evidence status, and match; a missing current-run match stays `null` even when an older run scored the same opportunity. Cross-run Viewer scores must display their assessment run ID. Do not infer an opening from stale listings or visibility on a social platform.
 
 ## Permitted research
 

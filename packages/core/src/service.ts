@@ -217,7 +217,7 @@ export class JobSearchService {
       const opportunityIds = [...new Set(parsed.opportunities.map((opportunity) => this.recordOpportunity(input.workspaceId, input.runId, opportunity)))];
       return { queryAttempt, opportunityIds };
     });
-    return { recorded: parsed.opportunities.length, query: recorded.queryAttempt ? this.publicQueryAttempt(recorded.queryAttempt) : null, opportunities: recorded.opportunityIds.map((id) => this.publicOpportunity(this.readOpportunity(input.workspaceId, id))) };
+    return { recorded: parsed.opportunities.length, query: recorded.queryAttempt ? this.publicQueryAttempt(recorded.queryAttempt) : null, opportunities: recorded.opportunityIds.map((id) => this.publicOpportunity(this.readOpportunity(input.workspaceId, id, input.runId))) };
   }
 
   async queryOpportunities(input: { workspaceId: string; runId?: string; kind?: Opportunity["kind"]; eligibility?: Eligibility; evidenceStatus?: EvidenceStatus; limit?: number }): Promise<PublicOpportunity[]> {
@@ -548,10 +548,10 @@ export class JobSearchService {
     this.database.prepare("DELETE FROM opportunities WHERE workspace_id = ? AND id = ?").run(workspaceId, duplicateId);
   }
 
-  private readOpportunity(workspaceId: string, opportunityId: string) {
+  private readOpportunity(workspaceId: string, opportunityId: string, runId?: string) {
     const row = this.database.prepare("SELECT * FROM opportunities WHERE workspace_id = ? AND id = ?").get(workspaceId, opportunityId) as OpportunityRow | undefined;
     if (!row) throw new Error(`Opportunity not found: ${opportunityId}`);
-    return this.opportunityFromRow(row);
+    return this.opportunityFromRow(row, runId);
   }
 
   private opportunityFromRow(row: OpportunityRow, runId?: string): Opportunity {

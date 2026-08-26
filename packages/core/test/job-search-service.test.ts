@@ -920,12 +920,102 @@ test("migration clears historical manual-only values before the service can read
   first.close();
   const dirty = new DatabaseSync(join(root, "job-search.sqlite"));
   dirty.prepare("UPDATE application_fields SET value = ? WHERE packet_id = ?").run("   ", packet.id);
-  dirty.prepare("DELETE FROM schema_migrations WHERE version = 8").run();
+  dirty.prepare("DELETE FROM schema_migrations WHERE version = 9").run();
   dirty.close();
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
   const checked = new DatabaseSync(join(root, "job-search.sqlite"), { readOnly: true });
   assert.equal((checked.prepare("SELECT value FROM application_fields WHERE packet_id = ?").get(packet.id) as { value: string }).value, "");
+  checked.close();
+});
+
+test("migration 9 reclassifies version 7 and 8 packet fields through the current classifier", async () => {
+  for (const legacyVersion of [7, 8]) {
+    const root = await mkdtemp(join(tmpdir(), `job-search-v${legacyVersion}-manual-reclass-`));
+    const first = new JobSearchService({ dataRoot: root });
+    const workspace = await first.openWorkspace({ name: `Legacy packet v${legacyVersion}` });
+    const packet = await first.upsertApplicationPacket({
+      workspaceId: workspace.id,
+      status: "draft",
+      fields: Array.from({ length: 6 }, (_, index) => ({ key: `legacy_field_${index}`, label: `Legacy field ${index}`, value: `legacy-answer-${index}` }))
+    });
+    first.close();
+
+    const legacyFields = [
+      { id: packet.fields[0].id, key: "submit", label: "Continue", classification: "confirm", value: "legacy-submit" },
+      { id: packet.fields[1].id, key: "primary_action", label: "最终提交", classification: "confirm", value: "legacy-final" },
+      { id: packet.fields[2].id, key: "consent_flag", label: "同意条款", classification: "confirm", value: "legacy-consent" },
+      { id: packet.fields[3].id, key: "legacy_control", label: "电子签名", classification: "confirm", value: "legacy-signature" },
+      { id: packet.fields[4].id, key: "salary", label: "Expected salary", classification: "safe", value: "100" },
+      { id: packet.fields[5].id, key: "email", label: "Email", classification: "confirm", value: "public-placeholder" }
+    ];
+    const dirty = new DatabaseSync(join(root, "job-search.sqlite"));
+    const update = dirty.prepare("UPDATE application_fields SET field_key = ?, label = ?, classification = ?, value = ? WHERE id = ?");
+    for (const field of legacyFields) update.run(field.key, field.label, field.classification, field.value, field.id);
+    dirty.prepare("DELETE FROM schema_migrations WHERE version > ?").run(legacyVersion);
+    dirty.close();
+
+    const migrated = new JobSearchService({ dataRoot: root });
+    const snapshot = await migrated.getWorkspaceSnapshot({ workspaceId: workspace.id });
+    const migratedPacket = snapshot.applicationPackets.find(({ id }) => id === packet.id)!;
+    const classifications = new Map(migratedPacket.fields.map((field) => [field.id, field.classification]));
+    assert.deepEqual([...classifications.keys()].sort(), legacyFields.map(({ id }) => id).sort());
+    for (const field of legacyFields.slice(0, 4)) assert.equal(classifications.get(field.id), "manual_only", `v${legacyVersion}:${field.label}`);
+    assert.equal(classifications.get(legacyFields[4].id), "confirm");
+    assert.equal(classifications.get(legacyFields[5].id), "safe");
+    await assert.rejects(migrated.reviewApplicationPacket({
+      workspaceId: workspace.id,
+      packetId: packet.id,
+      revision: migratedPacket.revision,
+      acknowledgedFieldIds: [legacyFields[4].id, legacyFields[0].id]
+    }), /confirm|acknowledge|field|确认/i);
+    const reviewed = await migrated.reviewApplicationPacket({
+      workspaceId: workspace.id,
+      packetId: packet.id,
+      revision: migratedPacket.revision,
+      acknowledgedFieldIds: [legacyFields[4].id]
+    });
+    assert.equal(reviewed.status, "ready_for_prefill");
+    migrated.close();
+
+    const checked = new DatabaseSync(join(root, "job-search.sqlite"), { readOnly: true });
+    assert.equal((checked.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 9);
+    const rows = checked.prepare("SELECT id, classification, value FROM application_fields WHERE packet_id = ?").all(packet.id) as Array<{ id: string; classification: string; value: string }>;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const field of legacyFields.slice(0, 4)) assert.deepEqual({ ...byId.get(field.id)! }, { id: field.id, classification: "manual_only", value: "" });
+    assert.deepEqual({ ...byId.get(legacyFields[4].id)! }, { id: legacyFields[4].id, classification: "confirm", value: "100" });
+    assert.deepEqual({ ...byId.get(legacyFields[5].id)! }, { id: legacyFields[5].id, classification: "safe", value: "public-placeholder" });
+    checked.close();
+  }
+});
+
+test("migration 9 safely follows a version 6 schema upgrade", async () => {
+  const root = await mkdtemp(join(tmpdir(), "job-search-v6-manual-reclass-"));
+  const databasePath = join(root, "job-search.sqlite");
+  const version6 = new DatabaseSync(databasePath);
+  version6.exec(`
+    CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+    INSERT INTO schema_migrations(version, applied_at) VALUES
+      (1, '2026-01-01T00:00:00.000Z'), (2, '2026-01-01T00:00:01.000Z'),
+      (3, '2026-01-01T00:00:02.000Z'), (4, '2026-01-01T00:00:03.000Z'),
+      (5, '2026-01-01T00:00:04.000Z'), (6, '2026-01-01T00:00:05.000Z');
+    CREATE TABLE candidate_profile_versions (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, version INTEGER NOT NULL, headline TEXT NOT NULL, skills_json TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE search_runs (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, status TEXT NOT NULL);
+    CREATE TABLE query_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, search_run_id TEXT NOT NULL, query_text TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);
+    CREATE TABLE source_observations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, opportunity_id TEXT NOT NULL, search_run_id TEXT NOT NULL, source_url TEXT NOT NULL, source_type TEXT NOT NULL, status TEXT NOT NULL, observed_at TEXT NOT NULL);
+    CREATE TABLE match_assessments (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, opportunity_id TEXT NOT NULL, search_run_id TEXT NOT NULL);
+    CREATE TABLE trace_events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, run_id TEXT);
+    CREATE TABLE application_fields (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, packet_id TEXT NOT NULL, field_key TEXT NOT NULL, label TEXT NOT NULL, value TEXT NOT NULL, classification TEXT NOT NULL, provenance_json TEXT);
+    INSERT INTO application_fields(id, workspace_id, packet_id, field_key, label, value, classification, provenance_json)
+      VALUES ('legacy-v6-field', 'legacy-v6-workspace', 'legacy-v6-packet', 'submit', 'Submit', 'legacy-submit', 'confirm', NULL);
+  `);
+  version6.close();
+
+  const migrated = new JobSearchService({ dataRoot: root });
+  migrated.close();
+  const checked = new DatabaseSync(databasePath, { readOnly: true });
+  assert.equal((checked.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 9);
+  assert.deepEqual({ ...checked.prepare("SELECT id, classification, value FROM application_fields").get() }, { id: "legacy-v6-field", classification: "manual_only", value: "" });
   checked.close();
 });
 
@@ -1002,7 +1092,7 @@ test("upgrades a version 2 database and backfills opportunity aliases", async ()
   const migrated = new JobSearchService({ dataRoot: root });
   migrated.close();
   const database = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 8);
+  assert.equal((database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get() as { version: number }).version, 9);
   assert.equal((database.prepare("SELECT COUNT(*) AS count FROM opportunity_aliases WHERE workspace_id = ? AND opportunity_id = ?").get("workspace-v2", "opportunity-v2") as { count: number }).count, 3);
   database.close();
 });

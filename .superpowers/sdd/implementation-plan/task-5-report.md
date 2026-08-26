@@ -127,3 +127,17 @@ b4e7ade18b42fca607ec7e936bb4b812598faa2c545ffb4dcd2fa3be8852d9b1  SHA256SUMS fil
 Fresh final evidence after the last release-script change: local validators plus `npm test` 97/97, lint, tracked sensitive scan, deterministic double package, SBOM validation, checksums, and isolated package smoke all passed. Existing TypeScript/build/audit evidence was reused because no TypeScript production source, Viewer input, dependency, or lockfile changed afterward. `npm ci` was intentionally skipped because this final-review change set did not modify dependencies or the lockfile.
 
 Residual platform and format limits remain unchanged: no remote Linux CI or Windows end-to-end smoke was run; Windows path compatibility is unit-tested; DOCX extraction is limited to visible main-document WordprocessingML; Node 22 may print its experimental SQLite warning; audit evidence is point-in-time. No remote, push, publish, plugin install, or live application action was performed.
+
+## Scoped final re-review retained artifact — superseding hashes
+
+Core, Viewer, architecture, and packaged reference inputs changed to close the two remaining Important findings. After those inputs and the complete 101-test/lint/typecheck/build/scanner gate were stable, exactly two successful unchanged-input release generations were performed. All five hashes matched; the retained package is 780,250 bytes:
+
+```text
+bc8fe4746f631f9fe4558017352b30561df9028adb39969ae447865b1fa218dc  job-search-copilot-0.1.0.tgz
+c0d552bc67711add65a3d0de64a257311a0502d575c555cce88dbbd87f3105ad  job-search-copilot-0.1.0.cdx.json
+0323c3c506cf5ddbca2dbf17d8c824b9ff23253b0554b87c365773e84a71eb4f  job-search-copilot-0.1.0-licenses.md
+b4b6a3682203664593a058a289ca14837ee73ea9df946b503d9d5544ce9dc0c9  NOTICE
+abc10945901b521782355306f90f3cd39864d8d47fb55c40a38e4d0d7ecbd3e5  SHA256SUMS file itself
+```
+
+The retained artifact passed official CycloneDX 1.6 validation (109 components), the package-time license compatibility/placeholder gate with 110 notice sections, `shasum -a 256 -c SHA256SUMS`, the 31-entry single-root/no-forbidden-entry inspection, and isolated exact-12/PDF/DOCX/TXT/Markdown/Viewer smoke. No third successful generation was performed. Reports under `.superpowers/` are not release inputs and were written after artifact retention.

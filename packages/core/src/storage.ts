@@ -5,6 +5,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { DatabaseSync } from "node:sqlite";
 
+import { classifyApplicationField } from "./domain.js";
+
 export const DATABASE_FILENAME = "job-search.sqlite";
 
 export function defaultDataRoot() {
@@ -66,7 +68,7 @@ export async function writeGeneratedFile(dataRoot: string, destinationPath: stri
   return destination;
 }
 
-const migrations = [
+const migrations: Array<string | ((database: DatabaseSync) => void)> = [
   `
     CREATE TABLE workspaces (
       id TEXT PRIMARY KEY,
@@ -348,7 +350,15 @@ const migrations = [
   `,
   `
     UPDATE application_fields SET value = '' WHERE classification = 'manual_only' AND value <> '';
-  `
+  `,
+  (database) => {
+    const fields = database.prepare("SELECT id, field_key, label FROM application_fields ORDER BY rowid").all() as Array<{ id: string; field_key: string; label: string }>;
+    const update = database.prepare("UPDATE application_fields SET classification = ?, value = CASE WHEN ? = 'manual_only' THEN '' ELSE value END WHERE id = ?");
+    for (const field of fields) {
+      const classification = classifyApplicationField(field.field_key, field.label);
+      update.run(classification, classification, field.id);
+    }
+  }
 ];
 
 export function openDatabase(dataRoot: string) {
@@ -365,7 +375,9 @@ export function openDatabase(dataRoot: string) {
       throw new Error(`Database schema version ${current.version} is newer than supported version ${migrations.length}.`);
     }
     for (let index = current.version; index < migrations.length; index += 1) {
-      database.exec(migrations[index]);
+      const migration = migrations[index];
+      if (typeof migration === "string") database.exec(migration);
+      else migration(database);
       database.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(index + 1, new Date().toISOString());
     }
     database.exec("COMMIT");
