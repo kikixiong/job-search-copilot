@@ -94,7 +94,15 @@ const traceInputSchema = z.object({
 function parseJson<T>(value: string) { return JSON.parse(value) as T }
 export function csvCell(value: unknown) {
   const text = String(value ?? "");
-  const spreadsheetFormula = /^[\u0000-\u0008\u000b\u000c\u000e-\u0020]*[\t\r=+\-@]/u.test(text);
+  let prefixIndex = 0;
+  let spreadsheetFormula = false;
+  while (prefixIndex < text.length) {
+    const code = text.charCodeAt(prefixIndex);
+    if (code === 0x09 || code === 0x0d) { spreadsheetFormula = true; break; }
+    const leadingControlOrSpace = code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x20);
+    if (!leadingControlOrSpace) { spreadsheetFormula = "=+-@".includes(text[prefixIndex]); break; }
+    prefixIndex += 1;
+  }
   const neutralized = spreadsheetFormula ? `'${text}` : text;
   return `"${neutralized.replaceAll('"', '""')}"`;
 }
