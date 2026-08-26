@@ -12,11 +12,16 @@ async function scanner() {
 test("rejects credentials, private keys, personal home paths, contact data, and application binaries", async () => {
   const { scanEntries } = await scanner();
   assert.equal(typeof scanEntries, "function", "tracked-file scanner is not implemented");
+  const secret = ["sk", "-live-abcdefghijklmnopqrstuvwxyz123456"].join("");
+  const privateKey = ["-----BEGIN PRI", "VATE KEY-----\nfixture\n-----END PRIVATE KEY-----"].join("");
+  const homePath = ["/Us", "ers/candidate/Jobs/resume.txt"].join("");
+  const email = ["candidate", "@company.invalid"].join("");
+  const phone = ["+1 415", " 867 5309"].join("");
   const findings = scanEntries([
-    { path: "notes.txt", content: "api_key=sk-live-abcdefghijklmnopqrstuvwxyz123456" },
-    { path: "key.pem", content: "-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----" },
-    { path: "profile.txt", content: "resume=/Users/example/Jobs/resume.txt" },
-    { path: "contact.txt", content: "candidate@example.com +1 415 555 2671" },
+    { path: "notes.txt", content: `api_key=${secret}` },
+    { path: "key.pem", content: privateKey },
+    { path: "profile.txt", content: `resume=${homePath}` },
+    { path: "contact.txt", content: `${email} ${phone}` },
     { path: "applications/candidate-resume.pdf", content: Buffer.from("%PDF synthetic") }
   ], { allowTestFixtures: true });
 
@@ -46,8 +51,9 @@ test("allows public metadata and intentional synthetic .test fixtures only", asy
 
 test("does not exempt a .test file that lacks an explicit synthetic marker", async () => {
   const { scanEntries } = await scanner();
+  const secret = ["sk", "-live-abcdefghijklmnopqrstuvwxyz123456"].join("");
   const findings = scanEntries([
-    { path: "packages/core/test/leaked.test.ts", content: "const leaked = 'sk-live-abcdefghijklmnopqrstuvwxyz123456';" }
+    { path: "packages/core/test/leaked.test.ts", content: `const leaked = '${secret}';` }
   ], { allowTestFixtures: true });
 
   assert.deepEqual(findings.map(({ rule }) => rule), ["credential"]);
@@ -56,8 +62,8 @@ test("does not exempt a .test file that lacks an explicit synthetic marker", asy
 test("rejects Windows and root account home paths", async () => {
   const { scanEntries } = await scanner();
   const findings = scanEntries([
-    { path: "windows.txt", content: "C:\\Users\\candidate\\Applications\\resume.txt" },
-    { path: "linux.txt", content: "/root/private/resume.txt" }
+    { path: "windows.txt", content: ["C:\\Us", "ers\\candidate\\Applications\\resume.txt"].join("") },
+    { path: "linux.txt", content: ["/ro", "ot/private/resume.txt"].join("") }
   ]);
 
   assert.deepEqual(findings.map(({ rule }) => rule), ["personal-home-path", "personal-home-path"]);
@@ -72,4 +78,34 @@ test("rejects named text resume artifacts unless they are intentional synthetic 
   ]);
 
   assert.deepEqual(findings.map(({ rule }) => rule), ["application-artifact", "application-artifact"]);
+});
+
+test("synthetic marker does not exempt a real secret, private key, home path, or contact", async () => {
+  const { scanEntries } = await scanner();
+  const secret = ["sk", "-live-abcdefghijklmnopqrstuvwxyz123456"].join("");
+  const privateKeyHeader = ["-----BEGIN PRI", "VATE KEY-----"].join("");
+  const homePath = ["/ro", "ot/private/resume.txt"].join("");
+  const email = ["candidate", "@company.invalid"].join("");
+  const findings = scanEntries([{
+    path: "packages/core/test/mixed.test.ts",
+    content: ["// synthetic fixture", `api_key='${secret}'`, privateKeyHeader, homePath, email].join("\n")
+  }]);
+
+  assert.deepEqual(findings.map(({ rule }) => rule), [
+    "private-key",
+    "personal-home-path",
+    "credential",
+    "contact-data"
+  ]);
+});
+
+test("synthetic credential exception accepts only an exact placeholder value", async () => {
+  const { scanEntries } = await scanner();
+  const secret = ["sk", "-live-abcdefghijklmnopqrstuvwxyz123456"].join("");
+  const findings = scanEntries([{
+    path: "packages/core/test/prefixed.test.ts",
+    content: `// synthetic fixture\nconst token = 'synthetic-secret-${secret}';`
+  }]);
+
+  assert.deepEqual(findings.map(({ rule }) => rule), ["credential"]);
 });

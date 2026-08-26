@@ -1,4 +1,5 @@
 import { builtinModules } from "node:module";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,24 +10,27 @@ import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 
-import { createCycloneDx, createDeterministicTgz, incompatibleLicenses, productionPackages } from "./release-lib.mjs";
+import { createCycloneDx, createDeterministicTgz, createThirdPartyNotices, incompatibleLicenses, productionPackages } from "./release-lib.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const version = "0.1.0";
 const artifactBase = `job-search-copilot-${version}`;
+const fixedReleaseSources = [
+  ".codex-plugin/plugin.json",
+  "README.md",
+  "LICENSE",
+  "PRIVACY.md",
+  "SECURITY.md",
+  "CONTRIBUTING.md",
+  "NOTICE",
+  "docs/ARCHITECTURE.md",
+  "docs/SOURCE_POLICY.md",
+  "docs/RELEASING.md"
+];
 
 export function releaseFilePlan() {
   return [
-    { source: ".codex-plugin/plugin.json", destination: ".codex-plugin/plugin.json" },
-    { source: "README.md", destination: "README.md" },
-    { source: "LICENSE", destination: "LICENSE" },
-    { source: "PRIVACY.md", destination: "PRIVACY.md" },
-    { source: "SECURITY.md", destination: "SECURITY.md" },
-    { source: "CONTRIBUTING.md", destination: "CONTRIBUTING.md" },
-    { source: "NOTICE", destination: "NOTICE" },
-    { source: "docs/ARCHITECTURE.md", destination: "docs/ARCHITECTURE.md" },
-    { source: "docs/SOURCE_POLICY.md", destination: "docs/SOURCE_POLICY.md" },
-    { source: "docs/RELEASING.md", destination: "docs/RELEASING.md" },
+    ...fixedReleaseSources.map((source) => ({ source, destination: source })),
     { source: "skills", destination: "skills" },
     { source: "references", destination: "references" },
     { destination: ".mcp.json" }
@@ -37,28 +41,40 @@ export function packagedMcpManifest() {
   return { mcpServers: { "job-search-copilot": { command: "node", args: ["dist/mcp/index.js"], cwd: "." } } };
 }
 
-async function copyPlan(stage) {
-  for (const item of releaseFilePlan()) {
-    if (!item.source) continue;
-    const destination = join(stage, item.destination);
-    await mkdir(dirname(destination), { recursive: true });
-    await cp(join(repositoryRoot, item.source), destination, { recursive: true });
-  }
-  await writeFile(join(stage, ".mcp.json"), JSON.stringify(packagedMcpManifest(), null, 2) + "\n");
+export async function trackedFilesBeneath(root, scopes) {
+  const output = execFileSync("git", ["ls-files", "-z", "--", ...scopes], { cwd: root });
+  return output.toString("utf8").split("\0").filter(Boolean).sort((left, right) => left.localeCompare(right, "en"));
 }
 
-function licenseMarkdown(packages) {
-  const lines = [
-    "# Third-party production dependencies",
-    "",
-    "Generated from `package-lock.json` for the bundled `0.1.0` release.",
-    "",
-    "| Package | Version | License |",
-    "| --- | --- | --- |",
-    ...packages.map((item) => `| ${item.name.replaceAll("|", "\\|")} | ${item.version} | ${item.license} |`),
-    ""
-  ];
-  return lines.join("\n");
+async function trackedReleasePlan() {
+  const tracked = await trackedFilesBeneath(repositoryRoot, [...fixedReleaseSources, "skills", "references"]);
+  const trackedSet = new Set(tracked);
+  for (const source of fixedReleaseSources) {
+    if (!trackedSet.has(source)) throw new Error(`Required release source is not tracked: ${source}`);
+  }
+  return tracked.map((source) => ({ source, destination: source }));
+}
+
+async function copyPlan(stage) {
+  const plan = await trackedReleasePlan();
+  for (const item of plan) {
+    const destination = join(stage, item.destination);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(join(repositoryRoot, item.source), destination);
+  }
+  await writeFile(join(stage, ".mcp.json"), JSON.stringify(packagedMcpManifest(), null, 2) + "\n");
+  return plan.map(({ destination }) => destination);
+}
+
+export function validateReleaseEntries(entries, plannedSources) {
+  const sources = new Set(plannedSources);
+  const generated = (path) => path === ".mcp.json"
+    || path === "dist/mcp/index.js"
+    || path.startsWith("dist/static/")
+    || path === "SBOM.cdx.json"
+    || path === "THIRD_PARTY_LICENSES.md";
+  const unexpected = entries.filter((path) => !sources.has(path) && !generated(path));
+  if (unexpected.length) throw new Error(`Release entry is not in the tracked release plan or generated-output allowlist: ${unexpected.join(", ")}`);
 }
 
 async function filesBeneath(directory) {
@@ -78,7 +94,7 @@ async function filesBeneath(directory) {
 }
 
 async function buildPlugin(stage) {
-  await copyPlan(stage);
+  const plannedSources = await copyPlan(stage);
   await mkdir(join(stage, "dist/mcp"), { recursive: true });
   const nodeBuiltins = [...new Set(builtinModules.flatMap((name) => name.startsWith("node:") ? [name] : [name, `node:${name}`]))];
   await esbuild({
@@ -89,18 +105,13 @@ async function buildPlugin(stage) {
     platform: "node",
     target: "node22",
     packages: "bundle",
-    define: { __JOB_SEARCH_COPILOT_BUNDLED__: "true" },
     external: nodeBuiltins,
     banner: { js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
     sourcemap: false,
-    legalComments: "none",
+    legalComments: "eof",
     charset: "utf8",
     logLevel: "warning"
   });
-  await cp(join(repositoryRoot, "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"), join(stage, "dist/mcp/pdf.worker.mjs"));
-  for (const directory of ["standard_fonts", "cmaps", "wasm"]) {
-    await cp(join(repositoryRoot, `node_modules/pdfjs-dist/${directory}`), join(stage, `dist/pdfjs/${directory}`), { recursive: true });
-  }
   await viteBuild({
     configFile: join(repositoryRoot, "packages/viewer/vite.config.ts"),
     root: join(repositoryRoot, "packages/viewer"),
@@ -111,10 +122,12 @@ async function buildPlugin(stage) {
   const incompatible = incompatibleLicenses(packages);
   if (incompatible.length) throw new Error(`Incompatible or unknown production licenses: ${incompatible.map(({ name, license }) => `${name} (${license})`).join(", ")}`);
   const sbom = JSON.stringify(createCycloneDx(lock), null, 2) + "\n";
-  const licenseReport = licenseMarkdown(packages);
+  const licenseReport = await createThirdPartyNotices(repositoryRoot, packages);
   await writeFile(join(stage, "SBOM.cdx.json"), sbom);
   await writeFile(join(stage, "THIRD_PARTY_LICENSES.md"), licenseReport);
-  return { sbom, licenseReport };
+  const archiveEntries = await filesBeneath(stage);
+  validateReleaseEntries(archiveEntries.map(({ path }) => path), plannedSources);
+  return { sbom, licenseReport, archiveEntries };
 }
 
 function sha256(content) {
@@ -128,7 +141,7 @@ async function writeArtifacts(stage, generated) {
   if (!finalPlugin.startsWith(`${releaseDirectory}/`)) throw new Error("Refusing to replace a release path outside release/.");
   await rm(finalPlugin, { recursive: true, force: true });
   await rename(stage, finalPlugin);
-  const archive = createDeterministicTgz(await filesBeneath(finalPlugin), "job-search-copilot");
+  const archive = createDeterministicTgz(generated.archiveEntries, "job-search-copilot");
   const notice = await readFile(join(repositoryRoot, "NOTICE"));
   const artifacts = new Map([
     [`${artifactBase}.tgz`, archive],

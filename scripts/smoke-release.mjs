@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -24,6 +26,7 @@ const expectedTools = [
 ];
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const execFileAsync = promisify(execFile);
 
 export function staticAssetPaths(html) {
   return [...html.matchAll(/(?:src|href)="([^"#?]+)"/g)]
@@ -58,21 +61,29 @@ function syntheticPdf(text) {
 }
 
 export async function runReleaseSmoke() {
-  const pluginRoot = join(repositoryRoot, "release/job-search-copilot");
-  const manifest = JSON.parse(await readFile(join(pluginRoot, ".mcp.json"), "utf8"));
-  const definition = manifest.mcpServers?.["job-search-copilot"];
-  assert.deepEqual(definition, { command: "node", args: ["dist/mcp/index.js"], cwd: "." });
-  const arbitraryCallerDirectory = await mkdtemp(join(tmpdir(), "job-search-smoke-caller-"));
-  const dataRoot = join(arbitraryCallerDirectory, "data");
-  const transport = new StdioClientTransport({
-    command: definition.command,
-    args: definition.args,
-    cwd: resolve(pluginRoot, definition.cwd),
-    env: { PATH: process.env.PATH ?? "", JOB_SEARCH_COPILOT_NO_BROWSER: "1", JOB_SEARCH_COPILOT_DATA_DIR: dataRoot },
-    stderr: "pipe"
-  });
-  const client = new Client({ name: "job-search-release-smoke", version: "0.1.0" });
+  const extractionRoot = await mkdtemp(join(tmpdir(), "job-search-isolated-release-"));
+  let client;
   try {
+    await execFileAsync("tar", ["-xzf", join(repositoryRoot, "release/job-search-copilot-0.1.0.tgz"), "-C", extractionRoot]);
+    const pluginRoot = join(extractionRoot, "job-search-copilot");
+    for (let current = pluginRoot; ; current = dirname(current)) {
+      await assert.rejects(access(join(current, "node_modules")), undefined, `Smoke ancestor contains node_modules: ${current}`);
+      if (current === parse(current).root) break;
+    }
+    const manifest = JSON.parse(await readFile(join(pluginRoot, ".mcp.json"), "utf8"));
+    const definition = manifest.mcpServers?.["job-search-copilot"];
+    assert.deepEqual(definition, { command: "node", args: ["dist/mcp/index.js"], cwd: "." });
+    const arbitraryCallerDirectory = join(extractionRoot, "caller");
+    await mkdir(arbitraryCallerDirectory);
+    const dataRoot = join(arbitraryCallerDirectory, "data");
+    const transport = new StdioClientTransport({
+      command: definition.command,
+      args: definition.args,
+      cwd: resolve(pluginRoot, definition.cwd),
+      env: { PATH: process.env.PATH ?? "", JOB_SEARCH_COPILOT_NO_BROWSER: "1", JOB_SEARCH_COPILOT_DATA_DIR: dataRoot },
+      stderr: "pipe"
+    });
+    client = new Client({ name: "job-search-release-smoke", version: "0.1.0" });
     await client.connect(transport);
     assert.deepEqual((await client.listTools()).tools.map(({ name }) => name), expectedTools);
     const workspace = structured(await client.callTool({ name: "workspace_open", arguments: { name: "Synthetic packaged smoke" } }));
@@ -97,9 +108,13 @@ export async function runReleaseSmoke() {
     const assets = staticAssetPaths(html);
     assert.ok(assets.length >= 2, "Viewer page must reference bundled JS and CSS assets.");
     for (const asset of assets) assert.equal((await fetch(new URL(asset, cleanUrl), { headers: { cookie } })).status, 200, asset);
-    console.log(`Release smoke passed: ${expectedTools.length} MCP tools, bundled PDF import, Viewer auth, and ${assets.length} static assets.`);
+    console.log(`Isolated archive smoke passed: ${expectedTools.length} MCP tools, bundled PDF import, Viewer auth, and ${assets.length} static assets.`);
   } finally {
-    await client.close();
+    try {
+      if (client) await client.close();
+    } finally {
+      await rm(extractionRoot, { recursive: true, force: true });
+    }
   }
 }
 

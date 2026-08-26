@@ -1,83 +1,92 @@
-# Task 5 report — open-source release gate
+# Task 5 report — open-source release gate and supply-chain closure
 
 ## Outcome
 
-Task 5 delivers a Chinese-first open-source surface and a local-only, reproducible release pipeline for Job Search Copilot `0.1.0`. The ignored `release/` output contains a self-contained plugin directory and portable `.tgz`; it requires Node 22 but no `npm install`. No remote, push, npm publish, GitHub repository, marketplace install, personal plugin install, or live job-board automation was performed.
+Task 5 now delivers a Chinese-first, local-only release pipeline for Job Search Copilot `0.1.0`, followed by closure of the independent supply-chain review against `bb4d0f7`. The ignored `release/` directory contains a self-contained plugin and deterministic `.tgz` that require Node `>=22.13.0` but no `npm install`. No remote, push, npm publish, GitHub repository, marketplace install, personal plugin install, or live job-board automation was performed.
 
-## Documentation and platform contract
+This report remains tracked because the binding Task 5 brief explicitly requires it. The independent review file and other review scratch files remain ignored and were not added to the release or commit.
 
-- Replaced the scaffold README with product thesis, local/model privacy distinction, architecture, requirements, source and packaged installation, three starter workflows, five skills, Viewer/exports/formats, no-submit boundary, commands, roadmap and non-goals.
-- Added `docs/ARCHITECTURE.md`, `PRIVACY.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/SOURCE_POLICY.md`, `docs/RELEASING.md`, and `NOTICE`.
-- NOTICE explicitly states that no JobSync, Job Sentinel, JobSpy, or AIHawk source was copied and disclaims platform partnership.
-- Local plugin installation wording follows the official OpenAI local/repo marketplace documentation; this task did not modify a personal marketplace.
-- macOS is documented as locally exercised, Linux as Node 22 CI-supported, and Windows as path-compatible but not end-to-end supported.
+## Review findings closed
 
-## Automation, scanner, and packaging
+### C-1 — self-contained PDF runtime and isolated smoke
 
-- Added one Ubuntu GitHub Actions workflow using Node 22 and `npm ci`. It runs plugin/fixture/skill validation, non-mutating ESLint, focused Core and full tests, TypeScript/Vite build, tracked-file sensitive scan, production audit, release packaging/license/SBOM generation, and bundled smoke. It performs no live job search.
-- Added ESLint 10 with TypeScript and React Hooks flat configuration; `npm run lint` has no write/fix flag.
-- Added a `git ls-files` scanner for likely API keys/tokens/cookies, private keys, personal home paths, non-synthetic contact data, and binary application documents. `.test` exemption requires an explicit synthetic marker. Controlled tests cover every rejection class, public metadata, intentional synthetic fixtures, source/lockfile false positives, and the non-synthetic `.test` bypass.
-- Added deterministic USTAR+gzip generation with sorted entries, fixed uid/gid/mtime/modes, esbuild single-entry Node bundle with only Node built-ins external, Vite relative static assets, CycloneDX 1.6 SBOM, production dependency license compatibility/report, NOTICE, and SHA256SUMS for final artifacts only.
-- The staged plugin contains `.codex-plugin/plugin.json`, a plugin-root-relative `.mcp.json`, five skills plus their agents, four references, documents, license/notices, a single MCP entry bundle, Viewer assets, PDF.js worker/fonts/CMaps/WASM, SBOM, and license report.
-- Release `.mcp.json` launches `dist/mcp/index.js` with `cwd: "."`; smoke runs from `/tmp`, resolves this against the installed plugin root, and does not rely on the repository caller cwd.
+- Replaced PDF.js 6 plus its `@napi-rs/canvas`/native-runtime dependency with `pdf2json@4.0.3`, a dependency-free pure JavaScript text-PDF parser. The release no longer copies PDF.js worker/fonts/CMaps/WASM and contains no `@napi-rs/canvas`, native binding, or external `node_modules` tree.
+- `release:smoke` now extracts the final `.tgz` to a system `mkdtemp` directory outside the checkout, asserts that no ancestor contains `node_modules`, gives the child no `NODE_PATH`, starts the extracted `.mcp.json` from the installed plugin root, and safely removes the temporary directory in `finally`.
+- The extracted-copy smoke initializes stdio MCP, lists exactly 12 tools, imports a synthetic text PDF, exchanges the one-use Viewer token, proves unauthenticated snapshot 401/authenticated snapshot 200, verifies CSP, and fetches both relative static assets.
 
-## TDD and focused evidence
+### I-1/I-2 — tracked inputs and sensitive fixtures
 
-Behavior scripts were written and observed RED before implementation:
+- Release source staging now uses exact fixed tracked files plus `git ls-files -- skills references`; files are copied individually. Before archive generation, every entry must be a tracked plan destination or an explicitly allowed generated output. Controlled temporary-git tests prove an untracked skill neighbor is excluded and a plan-extra archive entry is rejected.
+- The sensitive scanner no longer skips an entire `.test` file merely because it contains `synthetic`. Private keys, personal-home paths, credentials and contact data are always checked. Only an exact single synthetic credential placeholder in an eligible `.test` path is neutralized; `example.test` and 555 values remain the narrow obvious-fake contact forms.
+- Existing Core/MCP/Viewer security fixtures now assemble sensitive test values from fragments at runtime so the scanner can inspect the test source without weakening production rules.
 
-1. Scanner tests failed because no tracked-file scanner existed; GREEN covers all named sensitive classes and controlled exceptions.
-2. Release tests failed because deterministic tar, CycloneDX inventory, license gate, and release layout did not exist; all are GREEN.
-3. MCP runtime test failed because release no-browser options did not exist; GREEN installs a no-op opener only under the explicit smoke environment.
-4. Skill and static-asset validator tests failed before their scripts existed; both are GREEN.
-5. First staged MCP smoke failed at startup with Mammoth's CommonJS `Dynamic require of "fs" is not supported`; root cause was the ESM bundle lacking a scoped `createRequire`, and the next smoke passed.
-6. A new synthetic-PDF staged smoke then RED with missing bundled `pdf.worker.mjs`; GREEN includes the worker and PDF.js asset directories and uses bundle-relative asset URLs.
-7. Scanner regression RED proved that a real-looking secret could hide in a `.test` file without a synthetic marker; GREEN requires both conditions.
-8. Windows and root-account home-path fixtures RED against the first scanner; GREEN rejects both while keeping scanner source and synthetic security reports free of self-matches.
-9. A named Markdown/JSON resume-artifact regression RED showed that contact-free text resumes were not rejected; GREEN blocks named text application artifacts unless they are intentional synthetic `.test` fixtures.
+### I-3/I-4 — valid SBOM, compatibility and attribution
 
-Focused runs on the affected states:
+- CycloneDX 1.6 encodes a single standard SPDX license as `license.id`, SPDX OR/AND/WITH expressions as `expression`, and a non-SPDX legacy name as `license.name`.
+- `validate:sbom` uses the locally installed official `@cyclonedx/cyclonedx-library` schemas with AJV; CI performs this validation after package generation and does not download a schema dynamically.
+- The compatibility gate uses `spdx-expression-parse` and a documented static Apache-bundle policy. `OR` accepts a compatible selectable branch, `AND` requires every branch, and `WITH` requires an explicit allowed pair. GPL-only, LGPL-only, EPL, AGPL, SSPL, unknown and unlicensed expressions fail; `(MIT OR GPL-3.0-or-later)`, `(MIT AND Zlib)`, and `Apache-2.0 WITH LLVM-exception` pass.
+- `THIRD_PARTY_LICENSES.md` now contains per-component metadata attribution plus complete installed LICENSE/NOTICE/COPYING/copyright material for every production inventory component. If upstream omits a license file, its README license section or SPDX reference text is included. Mammoth's BSD-2-Clause copyright, redistribution conditions and disclaimer are explicitly covered. esbuild uses `legalComments: "eof"` instead of stripping recognized legal comments.
 
-- Release/script tests: 11 behavior tests total in the final full suite; targeted script batch passed before the final gate.
-- MCP: 11/11, including stdio entry, exact 12 tools, no browser launch, recovery/privacy and Viewer launcher behavior.
-- Viewer: 19/19 React and real HTTP/security tests.
-- Core: 25/25 after the PDF asset path change, including TXT/Markdown/PDF/DOCX import.
-- Staged release smoke: exact 12 MCP tools, synthetic bundled PDF import, one-use Viewer token, unauthenticated snapshot 401, authenticated snapshot 200, CSP, and 2 relative static assets.
+### I-5 — runtime floor
 
-## Final clean-state gate
+Root engines, Chinese README, releasing/security documentation and Linux CI now consistently require Node `>=22.13.0`; CI pins the actual minimum `22.13.0`. This is the first Node 22 release where `node:sqlite` no longer needs an experimental flag.
 
-- Final `npm ci`: added 321 packages; audited 325; 0 vulnerabilities.
+## TDD evidence
+
+Observed behavior-first RED → GREEN cycles for the review closure:
+
+1. The first final-archive isolated smoke initialized and listed 12 tools but PDF import RED with `DOMMatrix is not defined`; the pure JavaScript parser made the same extracted-copy path GREEN.
+2. Tracked-source and archive-plan tests RED because their packager APIs did not exist; GREEN excludes an untracked skill file and rejects an unexpected archive entry.
+3. A `.test` fixture containing a synthetic marker plus a real-looking secret/private key/home path/contact returned no findings; GREEN reports all four. A second RED showed a secret hidden behind a `synthetic-secret-...` prefix; GREEN allows only the exact placeholder.
+4. CycloneDX expression tests RED because OR/AND strings were placed in `license.id`; GREEN uses `expression`, and the official CycloneDX validator accepts the result.
+5. GPL-only/LGPL-only/EPL probes RED because the old gate accepted them; the SPDX AST policy rejects them while preserving tested permissive dual/conjunctive cases.
+6. The Mammoth notice regression RED because no notice collector existed; GREEN reproduces its copyright, conditions and disclaimer and expands the same collection to the full inventory.
+
+Focused development evidence before the final gate:
+
+- Core PDF format test: 1/1 after replacing the parser.
+- Release layout/tracked/archive tests: 3/3.
+- Release/SBOM/license/notice tests: 6/6 across the release and official-schema files.
+- Sensitive scanner tests: 7/7.
+- Modified Core/MCP/Viewer security suites: 44/44.
+- Isolated final-archive smoke: exact 12 tools, bundled PDF import, Viewer auth and 2 static assets.
+
+## Clean install and final gate
+
+The first final `npm ci` encountered iCloud dataless duplicate entries in two ignored dependency directories. Read-only inspection identified `node_modules/yallist` and `node_modules/has-symbols`; each exact ignored directory was moved to a separate `mktemp` quarantine and the quarantine was removed by a bounded trap. No tracked or user data was removed. The resulting single successful clean install added 335 packages, audited 339, and found 0 vulnerabilities.
+
+Final evidence after that install:
+
 - Official plugin validator: passed.
 - Official skill quick validators: 5/5 passed.
-- Local plugin/fixture/skill validation: passed (2 synthetic JSON fixtures, 5 skills and references).
-- `npm run lint`: passed, non-mutating.
-- `npm test`: 66/66 passed.
+- Local plugin/config/fixture/skill validation: passed (2 synthetic JSON fixtures, 5 skills and their references).
+- Non-mutating `npm run lint`: passed.
+- `npm test`: 73/73 passed.
 - `npm run typecheck`: passed.
-- `npm run build`: passed; Vite output was HTML 0.45 kB, CSS 10.37 kB, JS 210.24 kB (66.79 kB gzip).
+- `npm run build`: passed; Viewer output HTML 0.45 kB, CSS 10.37 kB, JS 210.24 kB (66.79 kB gzip).
 - `npm run audit:prod`: 0 vulnerabilities.
-- `npm run scan:sensitive`: passed after every deliverable, including this report, was staged and therefore visible through `git ls-files`.
-- Generated SBOM/license inventory: CycloneDX 1.6 with 133 unique production components; license gate found no unknown, unlicensed, AGPL, or SSPL production package.
+- `npm run scan:sensitive`: passed for tracked files.
+- Production license policy: 121 unique components, 0 incompatible/unknown results.
+- Official CycloneDX 1.6 schema validation: passed; SBOM contains the same 121 components and valid expression choices for jszip/pako.
+- Final `.tgz`: 876,880 bytes; its archive contains no `node_modules`, PDF.js assets or native Canvas binding.
+- Final isolated `.tgz` smoke: passed from outside the checkout with no ancestor `node_modules` and no `NODE_PATH`.
 
-## Determinism and final artifact integrity
+## Determinism and artifact integrity
 
-Exactly one unchanged-input repeat-generation comparison was performed after the release implementation was complete. Hashes of the `.tgz`, SBOM, license report, NOTICE, and generated `SHA256SUMS` matched across both runs. A later `git diff --check` pass normalized trailing blank lines in release documentation, so the final artifact was generated once more without performing a second determinism comparison; the generator code and dependency inputs did not change.
-
-Final artifact hashes:
+Because dependency, source and generator inputs changed during review closure, the final package was generated twice exactly once from unchanged inputs. SHA-256 values of the `.tgz`, SBOM, complete license report, NOTICE and generated `SHA256SUMS` matched between the two runs. Only the second run remains as the ignored final release.
 
 ```text
-89be6f29d1565db9ba1027dfade0a74ba32854fbe7bb93b0deb46df1126b8754  job-search-copilot-0.1.0.tgz
-a8b9569dd8badbbaee73e4804fe78301f3f158e9c2886e3e464419d09fe31abb  job-search-copilot-0.1.0.cdx.json
-72b30c8f4dfd80ec30c8a947aa461743f245c0cbf32175fa54c36a09b1a7f2db  job-search-copilot-0.1.0-licenses.md
-6ac78bad43a07d362231d8e2affac83d1fca62bdcfbeb3b942e025b2558849ec  NOTICE
+ef74aaac9d1991f187969267a6e67b498df1aacf46e7275d80aa4cfa07483e34  job-search-copilot-0.1.0.tgz
+80b817afb4042608105e3da2d5e3faac0ad515bec4a7248ef479235c667ecd47  job-search-copilot-0.1.0.cdx.json
+643ba64205661f252d76bebfba8d3e0fc198a824865f916c89b41ee9f67fc697  job-search-copilot-0.1.0-licenses.md
+b4b6a3682203664593a058a289ca14837ee73ea9df946b503d9d5544ce9dc0c9  NOTICE
+0736ab043c18f1ce286574c2de1216917b4868a60e4553f83b020fdb61fceff4  SHA256SUMS file itself
 ```
 
-The portable plugin archive is 3,196,209 bytes and needs no install step after extraction.
+Running `shasum -a 256 -c SHA256SUMS` from `release/` passed for all four listed final artifacts. No ordinary source, test, style or documentation file was hashed.
 
-`shasum -a 256 -c release/SHA256SUMS` passed for all four final artifacts. No ordinary source, style, test, or documentation file was hashed.
+## Review, skipped repetition and residual risk
 
-## Review, skipped repetition, and residual risk
+No subagent or independent implementation reviewer was started because the task explicitly prohibited subagents; the controller owns the independent re-review. During development only affected tests ran. After the successful clean install, lint/full tests/typecheck/build/audit/scanner ran once on the final implementation state, followed by the one required double-generation comparison and one schema/hash pass on the retained artifact. The isolated smoke was rerun once after its ancestor check was tightened to include the filesystem root; this did not change package inputs or regenerate artifacts. Unchanged-input builds, full suites and hash comparisons were not repeated.
 
-The implementer performed one whole-change requirements/diff/status review. No independent agent was started because Task 5 explicitly prohibited subagents and the plan assigns independent whole-change review to the controller.
-
-Repeated full tests/builds were skipped during individual RED/GREEN cycles; only scripts or affected Core/MCP/Viewer suites ran until the single final clean-state gate. Typecheck and build were both retained in the final gate because the release changed TypeScript project output and Vite path semantics. The sole repeated package generation was required for deterministic artifact evidence.
-
-Known residual risks: Linux CI is configured but was not executed on GitHub in this local-only task; Windows has no end-to-end smoke; Node 22 still prints its standard experimental `node:sqlite` warning; npm audit reflects the registry state at execution time. The repository remains unpushed and unpublished, and any public release still requires separate human approval.
+Known residual risks: Linux CI is configured at Node 22.13.0 but has not been executed on GitHub in this local-only task; Windows remains path-compatible without an end-to-end release smoke; Node 22.13.0 may still print the standard experimental `node:sqlite` warning; npm audit represents registry state at execution time. The repository remains unpushed and unpublished, and public release still requires separate human approval.

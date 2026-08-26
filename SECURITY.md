@@ -14,4 +14,4 @@ Viewer 只绑定 `127.0.0.1` 的 OS 随机端口。启动 URL 使用短期一次
 
 MCP 服务不收集账号密码或平台 secret。提交以下贡献会被拒绝：登录/账号托管、Cookie 导入或复用、绕过 robots/访问控制、CAPTCHA/MFA 绕过、隐藏抓取、自动接受同意/签名、自动发送消息/邮件，以及任何最终 submit automation。
 
-依赖风险通过 Node 22 CI、production audit、CycloneDX SBOM、许可证门禁、tracked-file sensitive scan 和可复现 release package 检查。`SHA256SUMS` 只覆盖最终发布 artifacts，不代表第三方平台内容可信。
+依赖风险通过 Node 22.13.0 CI、production audit、CycloneDX SBOM、许可证门禁、tracked-file sensitive scan 和可复现 release package 检查。`SHA256SUMS` 只覆盖最终发布 artifacts，不代表第三方平台内容可信。

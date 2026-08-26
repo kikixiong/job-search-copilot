@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.13.0
           cache: npm
       - run: npm ci
       - name: Validate plugin, fixtures, and skills
@@ -27,12 +27,14 @@ jobs:
       - name: Full tests
         run: npm test
       - name: Typecheck and build
-        run: npm run build
+        run: npm run typecheck && npm run build
       - name: Tracked-file sensitive-data gate
         run: npm run scan:sensitive
       - name: Production dependency audit
         run: npm run audit:prod
       - name: Bundle, license, SBOM, and package
         run: npm run release:package
+      - name: Official CycloneDX 1.6 schema validation
+        run: npm run validate:sbom
       - name: Bundled MCP and Viewer smoke
         run: npm run release:smoke

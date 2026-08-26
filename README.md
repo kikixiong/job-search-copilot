@@ -30,7 +30,7 @@ Viewer 展示候选人定位、机会对比、全部证据/冲突、trace 与申
 
 ## 要求与源码安装
 
-- Node.js 22 或更高版本
+- Node.js `>=22.13.0`（`node:sqlite` 无需实验参数的最低版本）
 - npm 10 或更高版本
 - 支持 Plugins 的 Codex / ChatGPT desktop surface
 

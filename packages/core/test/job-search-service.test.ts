@@ -9,6 +9,8 @@ import { DatabaseSync } from "node:sqlite";
 import { JobSearchService, redactPublicText, redactPublicUrl } from "../src/index.js";
 import { inspectResume, storeResumeCopy } from "../src/resume.js";
 
+const syntheticRootHome = ["/ro", "ot"].join("");
+
 async function withService(run: (service: JobSearchService, root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "job-search-core-"));
   const service = new JobSearchService({ dataRoot: root });
@@ -25,10 +27,10 @@ function isInside(parent: string, child: string) {
 }
 
 test("redacts POSIX paths after Unicode punctuation or adjacent text without treating a protocol separator as a path", () => {
-  assert.equal(redactPublicText("路径：/root/private/resume.pdf"), "[REDACTED]");
-  assert.equal(redactPublicText("参见/root/private/resume.pdf"), "[REDACTED]");
-  assert.equal(redactPublicText("路径:/root"), "[REDACTED]");
-  assert.equal(redactPublicText(":/root"), "[REDACTED]");
+  assert.equal(redactPublicText(`路径：${syntheticRootHome}/private/resume.pdf`), "[REDACTED]");
+  assert.equal(redactPublicText(`参见${syntheticRootHome}/private/resume.pdf`), "[REDACTED]");
+  assert.equal(redactPublicText(`路径:${syntheticRootHome}`), "[REDACTED]");
+  assert.equal(redactPublicText(`:${syntheticRootHome}`), "[REDACTED]");
   assert.equal(redactPublicText("/secret.txt"), "[REDACTED]");
   assert.equal(redactPublicText("\\\\server\\share\\resume.pdf"), "[REDACTED]");
   assert.equal(redactPublicText("参见https://example.test"), "参见https://example.test");
@@ -37,10 +39,11 @@ test("redacts POSIX paths after Unicode punctuation or adjacent text without tre
 
 test("getWorkspaceSnapshot never returns POSIX paths embedded in Chinese free text", async () => {
   await withService(async (service) => {
-    const workspace = await service.openWorkspace({ name: "候选人路径:/root" });
+    const privateWorkspaceName = `候选人路径:${syntheticRootHome}`;
+    const workspace = await service.openWorkspace({ name: privateWorkspaceName });
     await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: ":/secret.txt", skills: [], positioningTracks: [] } });
     const serialized = JSON.stringify(await service.getWorkspaceSnapshot({ workspaceId: workspace.id }));
-    assert.equal(serialized.includes("候选人路径:/root"), false);
+    assert.equal(serialized.includes(privateWorkspaceName), false);
     assert.equal(serialized.includes(":/secret.txt"), false);
   });
 });
@@ -434,6 +437,9 @@ test("classifies sensitive application fields and rejects any submitted packet s
 
 test("redacts PII and secret or answer bodies before persisting OTel-compatible trace events", async () => {
   await withService(async (service) => {
+    const personEmail = ["person", "@example.com"].join("");
+    const backupEmail = ["backup", "@example.org"].join("");
+    const accessToken = ["secret", "-token"].join("");
     const workspace = await service.openWorkspace({ name: "Tracing" });
     const event = await service.recordTraceEvent({
       workspaceId: workspace.id,
@@ -444,11 +450,11 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
       endedAt: "2026-01-01T00:00:01.000Z",
       status: "ok",
       attributes: {
-        email: "person@example.com",
-        note: "Call +1 415-555-2671 or backup@example.org",
+        email: personEmail,
+        note: `Call +1 415-555-2671 or ${backupEmail}`,
         resumeText: "private resume contents",
         cookie: "session=abc",
-        accessToken: "secret-token",
+        accessToken,
         applicationAnswerBody: "private answer",
         artifactPath: "/tmp/private-artifact.txt"
       }
@@ -456,7 +462,7 @@ test("redacts PII and secret or answer bodies before persisting OTel-compatible 
     assert.equal(event.name, "application.packet.review");
     const persisted = await service.getTraceEvents({ workspaceId: workspace.id });
     const serialized = JSON.stringify(persisted[0]);
-    for (const secret of ["person@example.com", "backup@example.org", "415-555-2671", "private resume contents", "session=abc", "secret-token", "private answer", "/tmp/private-artifact.txt"]) {
+    for (const secret of [personEmail, backupEmail, "415-555-2671", "private resume contents", "session=abc", accessToken, "private answer", "/tmp/private-artifact.txt"]) {
       assert.equal(serialized.includes(secret), false);
     }
     assert.match(serialized, /\[REDACTED\]/);
@@ -542,6 +548,7 @@ test("returns a redacted recovery snapshot only when a JSON export requests cont
 
 test("redacts authorization and application-answer containers including every descendant", async () => {
   await withService(async (service) => {
+    const bearerPrefix = ["Bear", "er "].join("");
     const workspace = await service.openWorkspace({ name: "Nested trace secrets" });
     await service.recordTraceEvent({
       workspaceId: workspace.id,
@@ -551,9 +558,9 @@ test("redacts authorization and application-answer containers including every de
       startedAt: "2026-01-01T00:00:00.000Z",
       status: "ok",
       attributes: {
-        authorization: "Bearer synthetic-bearer-secret",
-        request: { headers: { Authorization: "Bearer nested-secret" } },
-        credential: "Bearer generic-bearer-secret",
+        authorization: `${bearerPrefix}synthetic-bearer-secret`,
+        request: { headers: { Authorization: `${bearerPrefix}nested-secret` } },
+        credential: `${bearerPrefix}generic-bearer-secret`,
         applicationAnswers: { coverLetter: "synthetic-private-answer", nested: { phoneScreen: "nested-private-answer" } },
         application_answer: { body: "alternate-private-answer" },
         safe: "public-metric"

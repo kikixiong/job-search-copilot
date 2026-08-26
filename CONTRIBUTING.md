@@ -8,7 +8,7 @@
 - 只使用合成 fixtures。禁止提交真实简历、联系方式、申请文档、Cookie、token、私有截图或个人主目录路径。
 - Skills 需同时做 baseline 与 forward 测试，保持简洁，并把共享 schema/确定性逻辑留在 MCP/Core。
 - 来源、隐私、no-submit 和 application field 分级是公共安全边界；涉及这些边界时扩大到相关集成测试。
-- 依赖必须有与 Apache-2.0 分发兼容的许可证；不得引入 `NOASSERTION`、`UNLICENSED`、AGPL 或 SSPL production dependency。
+- 依赖必须有与 Apache-2.0 静态 bundle 分发兼容的许可证。门禁使用 SPDX parser 计算 `OR`、`AND` 与 `WITH`；GPL-only、LGPL-only、EPL、AGPL、SSPL、`NOASSERTION`、`UNLICENSED` 或未知表达式不得进入 production inventory，含明确 permissive 选项的 dual-license 可按该选项分发。
 
 最小本地检查：
 

@@ -32,4 +32,4 @@ Trace 仅保留用户可见的动作证据与固定 allowlist，不保存 hidden
 
 默认 data root 见 [PRIVACY.md](../PRIVACY.md)。根下包含 `job-search.sqlite` 与 `workspaces/<workspace-id>/attachments`、`workspaces/<workspace-id>/exports`。生成路径必须位于 data root，拒绝 traversal、symlink escape 与覆盖已有文件。
 
-Release 把 esbuild 的单入口 Node bundle 放在 `dist/mcp/index.js`，Vite 静态资源放在相邻的 `dist/static/`。Viewer 从 `import.meta.url` 相对定位静态目录，因此安装后的插件不依赖源码树或调用者 cwd。
+Release 把 esbuild 的单入口 Node bundle 放在 `dist/mcp/index.js`，Vite 静态资源放在相邻的 `dist/static/`。文本型 PDF 由 bundle 内的纯 JavaScript parser 处理，不需要 Canvas/native binding。Viewer 从 `import.meta.url` 相对定位静态目录，因此安装后的插件不依赖源码树、调用者 cwd 或外部 `node_modules`。
