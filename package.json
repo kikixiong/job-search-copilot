@@ -1,0 +1,29 @@
+{
+  "name": "job-search-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex plugin workspace for a privacy-conscious job search copilot.",
+  "license": "Apache-2.0",
+  "author": "Jiaqi Xiong <https://github.com/kikixiong>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kikixiong/job-search-copilot.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "npm@10",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run validate:config && tsc -b --pretty false",
+    "clean": "tsc -b --clean",
+    "test": "npm run validate:config",
+    "typecheck": "tsc -b --pretty false",
+    "validate:config": "node scripts/validate-config.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

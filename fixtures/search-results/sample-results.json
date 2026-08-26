@@ -1,0 +1,12 @@
+{
+  "fixture": true,
+  "source": "synthetic",
+  "query": "product analyst remote",
+  "results": [
+    {
+      "jobId": "sample-product-analyst",
+      "score": 0.91,
+      "matchReasons": ["SQL", "experimentation", "remote"]
+    }
+  ]
+}

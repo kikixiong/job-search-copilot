@@ -1,0 +1,18 @@
+{
+  "name": "job-search-copilot",
+  "version": "0.1.0",
+  "description": "A privacy-conscious Codex plugin scaffold for structured job-search assistance.",
+  "author": {
+    "name": "Jiaqi Xiong",
+    "url": "https://github.com/kikixiong"
+  },
+  "homepage": "https://github.com/kikixiong/job-search-copilot",
+  "license": "Apache-2.0",
+  "keywords": [
+    "job-search",
+    "career",
+    "codex-plugin"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/"
+}
