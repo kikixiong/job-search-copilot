@@ -6,7 +6,7 @@ import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
-import { JobSearchService, redactPublicText } from "../src/index.js";
+import { JobSearchService, redactPublicText, redactPublicUrl } from "../src/index.js";
 import { inspectResume, storeResumeCopy } from "../src/resume.js";
 
 async function withService(run: (service: JobSearchService, root: string) => Promise<void>) {
@@ -27,17 +27,21 @@ function isInside(parent: string, child: string) {
 test("redacts POSIX paths after Unicode punctuation or adjacent text without treating a protocol separator as a path", () => {
   assert.equal(redactPublicText("路径：/root/private/resume.pdf"), "[REDACTED]");
   assert.equal(redactPublicText("参见/root/private/resume.pdf"), "[REDACTED]");
+  assert.equal(redactPublicText("路径:/root"), "[REDACTED]");
+  assert.equal(redactPublicText(":/root"), "[REDACTED]");
+  assert.equal(redactPublicText("/secret.txt"), "[REDACTED]");
+  assert.equal(redactPublicText("\\\\server\\share\\resume.pdf"), "[REDACTED]");
   assert.equal(redactPublicText("参见https://example.test"), "参见https://example.test");
+  assert.equal(redactPublicUrl("https://example.test/jobs/1"), "https://example.test/jobs/1");
 });
 
 test("getWorkspaceSnapshot never returns POSIX paths embedded in Chinese free text", async () => {
   await withService(async (service) => {
-    const workspace = await service.openWorkspace({ name: "候选人路径：/root/private/resume.pdf" });
-    await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: "参见/root/private/resume.pdf", skills: [], positioningTracks: [] } });
+    const workspace = await service.openWorkspace({ name: "候选人路径:/root" });
+    await service.commitProfile({ workspaceId: workspace.id, baseVersion: null, profile: { headline: ":/secret.txt", skills: [], positioningTracks: [] } });
     const serialized = JSON.stringify(await service.getWorkspaceSnapshot({ workspaceId: workspace.id }));
-    assert.equal(serialized.includes("/root/private/resume.pdf"), false);
-    assert.equal(serialized.includes("候选人路径："), false);
-    assert.equal(serialized.includes("参见/root"), false);
+    assert.equal(serialized.includes("候选人路径:/root"), false);
+    assert.equal(serialized.includes(":/secret.txt"), false);
   });
 });
 

@@ -123,7 +123,7 @@ const namedSecretPattern = /\b(?:cookie|session|credential|authorization|access[
 const fileUrlPattern = /file:\/\/[^\s,;]+/i;
 const uncPathPattern = /\\\\[^\\\s]+\\[^\s,;]+/;
 const windowsDrivePathPattern = /[A-Za-z]:[\\/](?![\\/])[^\s,;]+/;
-const posixAbsolutePathPattern = /(?<![:/])\/(?!\/)[^\s,;]+/u;
+const posixAbsolutePathPattern = /(?<!\/)\/(?!\/)[^\s,;]+/u;
 
 export function containsSensitivePublicText(value: string) {
   return emailPattern.test(value) || phonePattern.test(value) || bearerPattern.test(value) || jwtPattern.test(value) || apiKeyPattern.test(value) || namedSecretPattern.test(value) || fileUrlPattern.test(value) || uncPathPattern.test(value) || windowsDrivePathPattern.test(value) || posixAbsolutePathPattern.test(value);

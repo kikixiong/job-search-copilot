@@ -145,7 +145,7 @@ test("returns a redacted, versioned recovery snapshot through workspace_export w
 test("workspace_export public recovery projection fails closed on paths, credentials, and secret URLs", async () => {
   await withRegistry(async (registry) => {
     const workspace = await registry.invoke("workspace_open", { name: "Recovery 路径：/root/private/resume.pdf,backup=/secure/private/resume.pdf" });
-    const profile = await registry.invoke("profile_commit", { workspaceId: workspace.id, baseVersion: null, profile: { headline: "Bearer opaque-session-value", skills: ["SQL", "cookie=session-value", "/data/private/a"], positioningTracks: [{ name: "Analytics", summary: "/workspace/private/a", targetRoles: ["参见/root/private/resume.pdf", "Analyst,/secure/private"] }] } });
+    const profile = await registry.invoke("profile_commit", { workspaceId: workspace.id, baseVersion: null, profile: { headline: "Bearer opaque-session-value", skills: ["SQL", "cookie=session-value", "/data/private/a"], positioningTracks: [{ name: "Analytics", summary: "/workspace/private/a", targetRoles: ["路径:/root", "参见/root/private/resume.pdf", "Analyst,/secure/private"] }] } });
     const run = await registry.invoke("search_run_begin", { workspaceId: workspace.id, profileVersion: profile.version, searchBrief: { keywords: ["credential=private-value"], locations: ["Remote"] }, preferenceVersion: null });
     const batch = await registry.invoke("search_record_batch", { workspaceId: workspace.id, runId: run.id, opportunities: [{ kind: "job", company: "Synthetic", title: "Analyst", location: "Remote", canonicalApplyUrl: "https://example.test/jobs/private@example.test?keep=public", eligibility: "eligible", evidence: { sourceUrl: "https://user:pass@example.test/jobs/1?keep=public", sourceType: "official", status: "open" }, match: { score: 80, factors: { skills: 90 }, reasons: ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature"], gaps: ["session=hidden"], unknowns: [] } }] });
     await registry.invoke("feedback_record", { workspaceId: workspace.id, opportunityId: batch.opportunities[0].id, disposition: "interested", reason: "cookie=session-value" });
@@ -153,7 +153,7 @@ test("workspace_export public recovery projection fails closed on paths, credent
     const exported = await registry.invoke("workspace_export", { workspaceId: workspace.id, format: "json", includeContent: true });
     const serialized = JSON.stringify(exported.snapshot);
     const exportedFile = await readFile(exported.path, "utf8");
-    for (const forbidden of ["路径：/root", "参见/root", "/root", "/secure", "/data", "/workspace", "opaque-session-value", "cookie=session-value", "credential=private-value", "private@example.test", "user:pass", "eyJhbGciOiJIUzI1NiJ9", "session=hidden"]) {
+    for (const forbidden of ["路径:/root", "路径：/root", "参见/root", "/root", "/secure", "/data", "/workspace", "opaque-session-value", "cookie=session-value", "credential=private-value", "private@example.test", "user:pass", "eyJhbGciOiJIUzI1NiJ9", "session=hidden"]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
       assert.equal(exportedFile.includes(forbidden), false, `file:${forbidden}`);
     }

@@ -152,3 +152,15 @@ Observed TDD evidence:
 - `git diff --check` passed. No React, root full test/build, or built-output smoke was repeated; those remain consolidated in Task 5's clean-install gate as previously recorded.
 
 This pass changes no route, DTO, schema, dependency, configuration, plugin, release artifact, or public tool contract. The I-3 public recovery privacy bypass is covered at the helper, Core service, MCP response/artifact, and Viewer HTTP boundaries.
+
+## Approval I-3 closure — colon-adjacent single-segment paths
+
+The approval review identified one remaining single-character bypass: the POSIX negative lookbehind excluded `:`, so `路径:/root`, `:/root`, and other colon-adjacent single-segment absolute paths had no later slash that could trigger redaction. The production change is deliberately one character in behavior: POSIX detection now excludes only a preceding `/` and retains `(?!/)`. Consequently the first slash of `://` is rejected because another slash follows, and the second is rejected because a slash precedes it, while `:/root` is fail-closed.
+
+TDD evidence on this exact boundary:
+
+- RED: `redactPublicText("路径:/root")`, the real Core snapshot, MCP export response/file, and Viewer HTTP snapshot all exposed the literal path.
+- GREEN helper coverage includes `路径:/root`, `:/root`, and `/secret.txt`; UNC remains `[REDACTED]`; plain free text containing only `https://example.test` remains visible; dedicated `redactPublicUrl("https://example.test/jobs/1")` preserves the normal HTTPS URL.
+- Current affected gates: TypeScript passed; Core 25/25; MCP 9/9 with exactly 12 tools; Viewer HTTP/security 10/10; `git diff --check` passed.
+
+No React/full/build/built-smoke repetition was added; Task 5 retains the clean-install final gate. No public API, route, schema, dependency, configuration, plugin, or release artifact changed.
