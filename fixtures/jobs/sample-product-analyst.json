@@ -1,0 +1,11 @@
+{
+  "fixture": true,
+  "source": "synthetic",
+  "id": "sample-product-analyst",
+  "title": "Product Analyst",
+  "company": "Northstar Analytics",
+  "location": "Remote (US time zones)",
+  "employmentType": "full-time",
+  "summary": "Analyze product usage, define metrics, and communicate insights to cross-functional teams.",
+  "skills": ["SQL", "Python", "experimentation", "data visualization"]
+}

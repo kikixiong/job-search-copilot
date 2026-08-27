@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Job Application"
+  short_description: "Draft a safe, evidence-backed application packet"
+  default_prompt: "Use $prepare-job-application to prepare a reviewed application packet for this audited role."

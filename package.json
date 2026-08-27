@@ -1,0 +1,54 @@
+{
+  "name": "job-search-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex plugin workspace for a privacy-conscious job search copilot.",
+  "license": "Apache-2.0",
+  "author": "Jiaqi Xiong <https://github.com/kikixiong>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kikixiong/job-search-copilot.git"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "packageManager": "npm@10",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run validate && tsc -b --pretty false && npm run build:client -w @kikixiong/job-search-copilot-viewer",
+    "clean": "tsc -b --clean",
+    "test": "npm run validate && tsc -b packages/core packages/viewer --pretty false && tsx --test packages/*/test/**/*.test.ts packages/*/test/**/*.test.tsx scripts/test/*.test.mjs",
+    "test:core": "tsc -b packages/core --pretty false && tsx --test packages/core/test/**/*.test.ts",
+    "test:mcp": "tsc -b packages/core packages/viewer --pretty false && tsx --test packages/mcp/test/**/*.test.ts",
+    "test:viewer": "tsc -b packages/core packages/viewer --pretty false && npm test -w @kikixiong/job-search-copilot-viewer",
+    "typecheck": "tsc -b --pretty false",
+    "validate": "npm run validate:config && npm run validate:skills",
+    "validate:config": "node scripts/validate-config.mjs",
+    "validate:skills": "node scripts/validate-skills.mjs",
+    "lint": "eslint .",
+    "scan:sensitive": "node scripts/scan-sensitive.mjs",
+    "release:package": "node scripts/build-release.mjs",
+    "release:smoke": "node scripts/smoke-release.mjs",
+    "validate:sbom": "node scripts/validate-sbom.mjs",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
+  },
+  "devDependencies": {
+    "@cyclonedx/cyclonedx-library": "^10.2.0",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "ajv-formats-draft2019": "^1.6.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
+    "spdx-expression-parse": "^5.0.0",
+    "spdx-license-list": "^6.12.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.68.0"
+  }
+}

@@ -1,0 +1,13 @@
+Job Search Copilot
+Copyright 2026 Jiaqi Xiong
+
+This product is licensed under the Apache License, Version 2.0.
+Third-party production dependency copyrights, license conditions, disclaimers,
+and upstream NOTICE material are reproduced in the generated
+THIRD_PARTY_LICENSES.md file shipped with each release.
+
+No source code was copied from JobSync, Job Sentinel, JobSpy, or AIHawk.
+Names of job boards, applicant tracking systems, and recruiting platforms are
+used only to describe interoperability and source policy. This project is not
+affiliated with, endorsed by, or sponsored by LinkedIn, Indeed, Workday,
+Greenhouse, Lever, Ashby, or any other recruiting platform.

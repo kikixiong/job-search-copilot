@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit Job Application"
+  short_description: "Verify application requirements and evidence"
+  default_prompt: "Use $audit-job-application to audit this role’s current requirements before I prepare an application."

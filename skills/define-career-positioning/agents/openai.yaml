@@ -1,0 +1,4 @@
+interface:
+  display_name: "Define Career Positioning"
+  short_description: "Confirm evidence-backed job targeting"
+  default_prompt: "Use $define-career-positioning to turn my resume into a confirmed job-targeting brief."

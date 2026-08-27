@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "job-search-copilot": {
+      "command": "node",
+      "args": ["packages/mcp/dist/index.js"],
+      "cwd": "."
+    }
+  }
+}

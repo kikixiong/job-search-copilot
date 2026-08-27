@@ -1,0 +1,36 @@
+{
+  "name": "job-search-copilot",
+  "version": "0.1.0",
+  "description": "A local-first Codex copilot for evidence-grounded job search and application preparation.",
+  "author": {
+    "name": "Jiaqi Xiong",
+    "url": "https://github.com/kikixiong"
+  },
+  "homepage": "https://github.com/kikixiong/job-search-copilot",
+  "license": "Apache-2.0",
+  "keywords": [
+    "job-search",
+    "career",
+    "codex-plugin"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Job Search Copilot",
+    "shortDescription": "Local-first, evidence-grounded job-search workflows.",
+    "longDescription": "A Chinese-first Codex plugin for career positioning, public opportunity research, evidence review, feedback loops, and application preparation without final-submit automation.",
+    "developerName": "Jiaqi Xiong",
+    "category": "Productivity",
+    "capabilities": [
+      "Versioned job-search workflow",
+      "Official-source evidence review",
+      "Local application preparation"
+    ],
+    "defaultPrompt": [
+      "上传简历，帮我先明确求职定位并确认目标岗位。",
+      "按我已确认的定位搜索并核验当前 Top 20 岗位。",
+      "使用 $run-job-search-loop 根据我的反馈重新搜索，并为选中的岗位准备申请材料。"
+    ],
+    "brandColor": "#1D4ED8"
+  }
+}
